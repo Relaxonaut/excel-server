@@ -1,5 +1,5 @@
 """Minimales Beispielmodul: so wenig braucht eine neue Funktion."""
-from f.core import Field, Module, Output
+from core.base import Field, Module, Output
 
 
 class Mehrwertsteuer(Module):

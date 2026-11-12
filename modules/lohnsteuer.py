@@ -3,7 +3,7 @@ from dataclasses import asdict, is_dataclass
 
 from lohnsteuer_bmf import berechne_lohnsteuer_pap
 
-from f.core import Field, Module
+from core.base import Field, Module
 
 
 def _to_dict(ergebnis) -> dict:

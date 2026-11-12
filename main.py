@@ -30,11 +30,14 @@ if os.environ.get("RENDER") and not (API_TOKEN and UI_PASSWORD):
     raise RuntimeError("Auf Render muessen API_TOKEN und UI_PASSWORD gesetzt sein (Gehaltsdaten!).")
 
 # Alles in modules/ automatisch laden -> Module melden sich selbst an
-for info in pkgutil.iter_modules(modules.__path__):
+LOAD_ERRORS: list[dict] = []     # Module, die beim Start nicht geladen werden konnten
+FOUND = [i.name for i in pkgutil.iter_modules(modules.__path__)]
+for name in FOUND:
     try:
-        importlib.import_module(f"modules.{info.name}")
+        importlib.import_module(f"modules.{name}")
     except Exception as e:
-        print(f"[WARNUNG] Modul '{info.name}' nicht geladen: {e}")
+        LOAD_ERRORS.append({"modul": name, "meldung": f"{type(e).__name__}: {e}"})
+        print(f"[WARNUNG] Modul '{name}' nicht geladen: {type(e).__name__}: {e}")
 for mod in Module.registry.values():
     mod.discover_outputs()
 
@@ -119,6 +122,12 @@ def ui():
 @app.get("/api/info", dependencies=[Depends(ui_auth)])
 def info_():
     return {"token": API_TOKEN}
+
+
+@app.get("/api/status", dependencies=[Depends(ui_auth)])
+def status():
+    """Diagnose: welche Dateien in modules/ gefunden, welche geladen, welche fehlgeschlagen sind."""
+    return {"gefunden": FOUND, "geladen": list(Module.registry), "fehler": LOAD_ERRORS}
 
 
 @app.get("/api/modules", dependencies=[Depends(ui_auth)])

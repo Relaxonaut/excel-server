@@ -29,6 +29,8 @@
   </select>
 </label>
 
+<div id="status"></div>
+
 <section>
   <h2>1. Verbindung (einmal pro Excel-Datei)</h2>
   <ol>
@@ -88,6 +90,20 @@ async function load() {
   INFO = await api("/api/info");
   MODS = await api("/api/modules");
   renderModules();
+  showStatus(await api("/api/status"));
+}
+
+// ---- Rote Box, wenn beim Start etwas schiefging ----
+function showStatus(st) {
+  const probs = st.fehler.map(f => `Modul „${esc(f.modul)}“ konnte nicht geladen werden: <code>${esc(f.meldung)}</code>`);
+  if (!st.geladen.length)
+    probs.push(`Es ist gar kein Modul geladen. Gefundene Dateien in modules/: ${esc(st.gefunden.join(", ") || "keine")}`);
+  else if (!MODS.some(m => m.config.aktiv))
+    probs.push("Kein Modul ist eingeschaltet. Unten bei einem Modul „Modul aktiv“ anhaken und speichern.");
+  $("#status").innerHTML = probs.length
+    ? `<div style="border:2px solid #c33;border-radius:8px;padding:.6rem 1rem;margin:1rem 0">
+         <b>Problem:</b><ul>${probs.map(p => `<li>${p}</li>`).join("")}</ul></div>`
+    : "";
 }
 
 // ---- Eingabefeld passend zum Typ der Einstellung ----
@@ -149,6 +165,7 @@ async function save(mid) {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     msg.textContent = "Gespeichert ✓ – in Excel: Daten → Alle aktualisieren";
+    m.config.aktiv = body.aktiv; showStatus(await api("/api/status"));
   } catch (e) { msg.textContent = "Fehler: " + e.message; }
 }
 

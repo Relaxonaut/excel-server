@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: excel-server
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --no-access-log
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: API_TOKEN          # Schluessel, den Excel mitschickt
+        generateValue: true
+      - key: UI_PASSWORD        # Passwort fuer die Weboberflaeche
+        generateValue: true
+      # Optional (nur bezahlter Plan + Disk): Einstellungen dauerhaft speichern
+      # - key: DATA_DIR
+      #   value: /data
