@@ -1,0 +1,3 @@
+fastapi
+uvicorn
+lohnsteuer_bmf   # so installiert wie bisher bei dir

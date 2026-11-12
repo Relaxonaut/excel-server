@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Excel-Server</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+  section { border: 1px solid #8884; border-radius: 10px; padding: 1rem 1.25rem; margin: 1.25rem 0; }
+  label { display: grid; grid-template-columns: 220px 1fr; gap: .5rem; align-items: center; margin: .35rem 0; }
+  label small { grid-column: 2; opacity: .65; }
+  input, select { padding: .35rem .5rem; }
+  code { display: block; padding: .5rem; margin: .3rem 0; background: #8882; border-radius: 6px;
+         white-space: pre-wrap; word-break: break-all; }
+  .out { margin: .9rem 0; }
+  .bar { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+  button { padding: .35rem .8rem; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>Excel-Server</h1>
+<div class="bar">
+  <label style="display:flex;gap:.5rem">Server-Adresse
+    <input id="base" size="30" oninput="redraw()"></label>
+  <label style="display:flex;gap:.5rem">Excel-Sprache
+    <select id="lang" onchange="redraw()">
+      <option value="de">Deutsch</option>
+      <option value="en">English</option>
+    </select></label>
+</div>
+<div id="app"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const FN = {
+  de: { sep: ";", WEBSERVICE: "WEBDIENST", ENCODEURL: "URLCODIEREN", NUMBERVALUE: "ZAHLENWERT" },
+  en: { sep: ",", WEBSERVICE: "WEBSERVICE", ENCODEURL: "ENCODEURL", NUMBERVALUE: "NUMBERVALUE" },
+};
+let MODS = [];
+let cells = JSON.parse(localStorage.cells || "{}");
+$("#base").value = location.origin;
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function load() {
+  MODS = await (await fetch("/api/modules")).json();
+  render();
+}
+
+// ---- Einstellungen: Eingabefeld passend zum Typ ----
+function settingInput(m, f) {
+  const id = `s_${m.id}_${f.name}`, v = m.values[f.name];
+  if (f.type === "bool") return `<input type="checkbox" id="${id}" ${v ? "checked" : ""}>`;
+  if (f.type === "select")
+    return `<select id="${id}">${(f.options || []).map(o => `<option ${o == v ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  const numeric = f.type === "int" || f.type === "float";
+  return `<input ${numeric ? 'type="number" step="any"' : 'type="text"'} id="${id}" value="${esc(v)}">`;
+}
+
+async function save(mid) {
+  const m = MODS.find(x => x.id === mid), body = {};
+  for (const f of m.settings) {
+    const el = $(`#s_${mid}_${f.name}`);
+    body[f.name] = f.type === "bool" ? el.checked : el.value;
+  }
+  const r = await fetch(`/api/settings/${mid}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  $(`#msg_${mid}`).textContent = r.ok ? "Gespeichert ✓ (in Excel: Strg+Alt+F9)" : "Fehler: " + await r.text();
+}
+
+// ---- Seitenaufbau ----
+function render() {
+  $("#app").innerHTML = MODS.map(m => `
+    <section>
+      <h2>${esc(m.name)}</h2>
+      <p>${esc(m.description)}</p>
+      ${m.settings.length ? `<h3>Einstellungen</h3>` +
+        m.settings.map(f => `<label>${esc(f.label)} ${settingInput(m, f)}${f.help ? `<small>${esc(f.help)}</small>` : ""}</label>`).join("") +
+        `<button onclick="save('${m.id}')">Speichern</button> <span id="msg_${m.id}"></span>` : ""}
+      <h3>Excel-Formeln</h3>
+      <p>In welchen Zellen stehen die Eingaben? (z.B. G20)</p>
+      ${m.inputs.map(i => `<label>${esc(i.label)}
+        <input value="${esc(cells[m.id + "." + i.name] || "")}" placeholder="z.B. G20"
+               oninput="setCell('${m.id}','${i.name}',this.value)">
+        ${i.help ? `<small>${esc(i.help)}</small>` : ""}</label>`).join("")}
+      <div id="f_${m.id}"></div>
+    </section>`).join("");
+  redraw();
+}
+
+function setCell(mid, name, val) {
+  cells[mid + "." + name] = val.trim();
+  localStorage.cells = JSON.stringify(cells);
+  drawFormulas(MODS.find(m => m.id === mid));
+}
+
+function redraw() { MODS.forEach(drawFormulas); }
+
+// ---- Formel-Generator ----
+function drawFormulas(m) {
+  const f = FN[$("#lang").value], b = $("#base").value.replace(/\/$/, "");
+  const cell = i => cells[m.id + "." + i.name] || i.name.toUpperCase();
+  const query = m.inputs.map(i => `${i.name}="&${f.ENCODEURL}(${cell(i)})`).join('&"&');
+
+  const html = m.outputs.map(o => {
+    const call = `${f.WEBSERVICE}("${b}/calc/${m.id}/${o.name}?${query})`;
+    const fx = o.type === "number"
+      ? `=${f.NUMBERVALUE}(${call}${f.sep}"."${f.sep}",")`
+      : `=${call}`;
+    const test = `${b}/calc/${m.id}/${o.name}?` +
+      m.inputs.map(i => `${i.name}=${encodeURIComponent(i.example ?? "")}`).join("&");
+    return `<div class="out"><b>${esc(o.label)}</b>
+      <code>${esc(fx)}</code>
+      <button onclick="copy(this)">Kopieren</button>
+      <a href="${esc(test)}" target="_blank">Testen (Beispielwerte)</a></div>`;
+  }).join("");
+
+  const all = `${b}/calc/${m.id}/_alle?` +
+    m.inputs.map(i => `${i.name}=${encodeURIComponent(i.example ?? "")}`).join("&");
+  $("#f_" + m.id).innerHTML = html +
+    `<p><a href="${esc(all)}" target="_blank">Alle Ausgaben dieses Moduls anzeigen (Debug)</a></p>`;
+}
+
+function copy(btn) {
+  const ta = document.createElement("textarea");
+  ta.value = btn.previousElementSibling.textContent;
+  document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+  btn.textContent = "Kopiert ✓";
+  setTimeout(() => btn.textContent = "Kopieren", 1500);
+}
+
+load();
+</script>
+</body>
+</html>

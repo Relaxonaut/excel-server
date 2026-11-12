@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Excel-Server</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  section { border: 1px solid #8884; border-radius: 10px; padding: 1rem 1.25rem; margin: 1.25rem 0; }
+  label { display: grid; grid-template-columns: 220px 1fr; gap: .5rem; align-items: center; margin: .35rem 0; }
+  label small { grid-column: 2; opacity: .65; }
+  input, select, textarea { padding: .35rem .5rem; font: inherit; }
+  code, pre, textarea.mono { font-family: ui-monospace, Consolas, monospace; font-size: .9rem; }
+  code.block { display: block; padding: .5rem; margin: .3rem 0; background: #8882; border-radius: 6px;
+               white-space: pre-wrap; word-break: break-all; }
+  table { border-collapse: collapse; width: 100%; margin-top: .5rem; }
+  td, th { border-bottom: 1px solid #8883; padding: .3rem .5rem; text-align: left; }
+  .out { margin: .8rem 0; }
+  button { padding: .35rem .8rem; cursor: pointer; }
+  textarea.mono { width: 100%; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<h1>Excel-Server</h1>
+<label style="grid-template-columns:auto auto;justify-content:start">Excel-Sprache
+  <select id="lang" onchange="drawFormulas()">
+    <option value="de">Deutsch</option>
+    <option value="en">English</option>
+  </select>
+</label>
+
+<section>
+  <h2>1. Verbindung (einmal pro Excel-Datei)</h2>
+  <ol>
+    <li>In Excel einen <b>Namen</b> für den Datenbereich anlegen (<i>Formeln → Namens-Manager → Neu</i>):
+      Name <input id="rangeName" value="Daten" size="8">, Bezug z.B. <code>=Tabelle1!$A$1:$Z$200</code>.
+      Der Bereich muss bei <b>A1</b> beginnen, damit die Zelladressen (G20 …) stimmen.</li>
+    <li><i>Daten → Neue Abfrage → Aus anderen Quellen → Leere Abfrage</i> → <i>Erweiterter Editor</i> →
+      diesen Code einfügen: <button onclick="copyM(this)">M-Code kopieren</button></li>
+    <li>Abfrage in <b>Ergebnis</b> umbenennen und als Tabelle laden – <b>auf einem anderen Blatt</b> als die Daten.</li>
+    <li>Aktualisieren: <i>Daten → Alle aktualisieren</i>. Automatisch: Abfrageeigenschaften →
+      „Alle X Minuten“ / „Beim Öffnen aktualisieren“.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>2. Mit einer Excel-Datei testen</h2>
+  <p>Die Datei wird nur im Speicher gelesen und nicht gespeichert.</p>
+  <label>Datei (.xlsx) <input type="file" id="file" accept=".xlsx"></label>
+  <label>Blattname <input id="blatt" value="Tabelle1"></label>
+  <p><button onclick="testFile()">Testen</button> <span id="testMsg"></span></p>
+  <div id="testResult"></div>
+</section>
+
+<div id="modules"></div>
+
+<section>
+  <h2>Einstellungen sichern</h2>
+  <p>Auf dem kostenlosen Render-Plan gehen gespeicherte Einstellungen bei jedem Neustart verloren.
+     Kopiere diesen Text in Render unter <i>Environment</i> als Variable <code>SETTINGS_JSON</code>,
+     dann sind sie dauerhaft.</p>
+  <button onclick="exportCfg()">Anzeigen</button>
+  <textarea id="export" class="mono" rows="4" readonly style="display:none;margin-top:.5rem"></textarea>
+</section>
+
+<script>
+const $ = s => document.querySelector(s);
+const FN = {
+  de: { sep: ";", VLOOKUP: "SVERWEIS", FALSE: "FALSCH" },
+  en: { sep: ",", VLOOKUP: "VLOOKUP", FALSE: "FALSE" },
+};
+let MODS = [], INFO = { token: "" };
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let msg = await r.text();
+    try { msg = JSON.parse(msg).detail || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+async function load() {
+  INFO = await api("/api/info");
+  MODS = await api("/api/modules");
+  renderModules();
+}
+
+// ---- Eingabefeld passend zum Typ der Einstellung ----
+function settingInput(m, f) {
+  const id = `s_${m.id}_${f.name}`, v = m.config.werte[f.name];
+  if (f.type === "bool") return `<input type="checkbox" id="${id}" ${v ? "checked" : ""}>`;
+  if (f.type === "select")
+    return `<select id="${id}">${(f.options || []).map(o => `<option ${o == v ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  const numeric = f.type === "int" || f.type === "float";
+  return `<input ${numeric ? 'type="number" step="any"' : 'type="text"'} id="${id}" value="${esc(v)}">`;
+}
+
+// ---- Alles pro Modul wird aus dessen Deklaration erzeugt ----
+function renderModules() {
+  $("#modules").innerHTML = MODS.map(m => `
+    <section>
+      <h2>${esc(m.name)}</h2>
+      <p>${esc(m.description)}</p>
+      <label>Modul aktiv <span><input type="checkbox" id="a_${m.id}" ${m.config.aktiv ? "checked" : ""}></span></label>
+      <h3>Zellen in deiner Excel-Datei</h3>
+      ${m.inputs.map(i => `
+        <label>${esc(i.label)}
+          <input id="c_${m.id}_${i.name}" value="${esc(m.config.zellen[i.name])}" placeholder="z.B. G20">
+          ${i.help ? `<small>${esc(i.help)}</small>` : ""}
+        </label>`).join("")}
+      ${m.settings.length ? "<h3>Einstellungen</h3>" + m.settings.map(f => `
+        <label>${esc(f.label)} <span>${settingInput(m, f)}</span>
+          ${f.help ? `<small>${esc(f.help)}</small>` : ""}
+        </label>`).join("") : ""}
+      <p><button onclick="save('${m.id}')">Speichern</button> <span id="msg_${m.id}"></span></p>
+      <h3>Ergebnisse in Excel abrufen</h3>
+      <div id="fx_${m.id}"></div>
+    </section>`).join("");
+  drawFormulas();
+}
+
+function drawFormulas() {
+  const f = FN[$("#lang").value];
+  MODS.forEach(m => {
+    $("#fx_" + m.id).innerHTML = m.outputs.map(o => {
+      const fx = `=${f.VLOOKUP}("${m.id}.${o.name}"${f.sep}Ergebnis${f.sep}2${f.sep}${f.FALSE})`;
+      return `<div class="out"><b>${esc(o.label)}</b>
+        <code class="block">${esc(fx)}</code>
+        <button onclick="copyEl(this)">Kopieren</button></div>`;
+    }).join("");
+  });
+}
+
+async function save(mid) {
+  const m = MODS.find(x => x.id === mid), msg = $("#msg_" + mid);
+  const body = { aktiv: $(`#a_${mid}`).checked, zellen: {}, werte: {} };
+  m.inputs.forEach(i => body.zellen[i.name] = $(`#c_${mid}_${i.name}`).value);
+  m.settings.forEach(f => {
+    const el = $(`#s_${mid}_${f.name}`);
+    body.werte[f.name] = f.type === "bool" ? el.checked : el.value;
+  });
+  try {
+    await api(`/api/modules/${mid}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    msg.textContent = "Gespeichert ✓ – in Excel: Daten → Alle aktualisieren";
+  } catch (e) { msg.textContent = "Fehler: " + e.message; }
+}
+
+// ---- Testlauf mit hochgeladener Datei ----
+async function testFile() {
+  const file = $("#file").files[0], msg = $("#testMsg");
+  if (!file) { msg.textContent = "Bitte zuerst eine Datei wählen."; return; }
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("blatt", $("#blatt").value);
+  msg.textContent = "Rechne …";
+  try {
+    const rows = await api("/api/test", { method: "POST", body: fd });
+    msg.textContent = "";
+    $("#testResult").innerHTML = rows.length
+      ? `<table><tr><th>Name</th><th>Wert</th></tr>${rows.map(r =>
+          `<tr><td>${esc(r.Name)}</td><td>${esc(r.Wert)}</td></tr>`).join("")}</table>`
+      : "Keine aktiven Module.";
+  } catch (e) { msg.textContent = "Fehler: " + e.message; }
+}
+
+// ---- Kopieren ----
+function copyText(text, btn) {
+  const ta = document.createElement("textarea");
+  ta.value = text; document.body.appendChild(ta); ta.select();
+  document.execCommand("copy"); ta.remove();
+  const old = btn.textContent; btn.textContent = "Kopiert ✓";
+  setTimeout(() => btn.textContent = old, 1500);
+}
+function copyEl(btn) { copyText(btn.previousElementSibling.textContent, btn); }
+
+function copyM(btn) {
+  const name = $("#rangeName").value.trim() || "Daten";
+  const code = `let
+    Quelle = Excel.CurrentWorkbook(){[Name="${name}"]}[Content],
+    Zeilen = Table.ToRows(Quelle),
+    Anfrage = Json.FromValue([zellen = Zeilen]),
+    Antwort = Web.Contents("${location.origin}/excel/run", [
+        Headers = [#"Content-Type" = "application/json", #"X-Token" = "${INFO.token}"],
+        Content = Anfrage,
+        Timeout = #duration(0, 0, 2, 0)
+    ]),
+    Antwortdaten = Json.Document(Antwort),
+    Tabelle = Table.FromRecords(Antwortdaten, {"Name", "Wert"})
+in
+    Tabelle`;
+  copyText(code, btn);
+}
+
+async function exportCfg() {
+  const el = $("#export");
+  el.value = JSON.stringify(await api("/api/export"));
+  el.style.display = "block"; el.select();
+}
+
+load();
+</script>
+</body>
+</html>
