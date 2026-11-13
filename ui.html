@@ -1,28 +1,143 @@
-<!doctype html>
+
+<!DOCTYPE html>
 <html lang="de">
 <head>
-<meta charset="utf-8">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Excel-Server</title>
+
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
-  section { border: 1px solid #8884; border-radius: 10px; padding: 1rem 1.25rem; margin: 1.25rem 0; }
-  label { display: grid; grid-template-columns: 220px 1fr; gap: .5rem; align-items: center; margin: .35rem 0; }
-  label small { grid-column: 2; opacity: .65; }
-  input, select, textarea { padding: .35rem .5rem; font: inherit; }
-  code, pre, textarea.mono { font-family: ui-monospace, Consolas, monospace; font-size: .9rem; }
-  code.block { display: block; padding: .5rem; margin: .3rem 0; background: #8882; border-radius: 6px;
-               white-space: pre-wrap; word-break: break-all; }
-  table { border-collapse: collapse; width: 100%; margin-top: .5rem; }
-  td, th { border-bottom: 1px solid #8883; padding: .3rem .5rem; text-align: left; }
-  .out { margin: .8rem 0; }
-  button { padding: .35rem .8rem; cursor: pointer; }
-  textarea.mono { width: 100%; box-sizing: border-box; }
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  font-family: system-ui, sans-serif;
+  max-width: 960px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  line-height: 1.5;
+}
+
+section {
+  border: 1px solid #8884;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin: 1.25rem 0;
+}
+
+label {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: .5rem;
+  align-items: center;
+  margin: .5rem 0;
+}
+
+label small {
+  grid-column: 2;
+  opacity: .65;
+}
+
+input, select, textarea {
+  padding: .4rem .5rem;
+  font: inherit;
+  max-width: 100%;
+}
+
+input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+button {
+  padding: .4rem .8rem;
+  cursor: pointer;
+  font: inherit;
+}
+
+code, pre, textarea.mono {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: .9rem;
+}
+
+code.block {
+  display: block;
+  padding: .5rem;
+  margin: .3rem 0;
+  background: #8882;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: .5rem;
+}
+
+td, th {
+  border-bottom: 1px solid #8883;
+  padding: .4rem .5rem;
+  text-align: left;
+}
+
+.out {
+  margin: .8rem 0;
+}
+
+textarea.mono {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.success {
+  color: #269c58;
+}
+
+.error {
+  color: #d44;
+}
+
+.status-box {
+  border: 2px solid #c33;
+  border-radius: 8px;
+  padding: .6rem 1rem;
+  margin: 1rem 0;
+}
+
+.setting-row {
+  border-bottom: 1px solid #8882;
+  padding: .3rem 0;
+}
+
+.actions {
+  display: flex;
+  gap: .8rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+@media(max-width:600px) {
+  label {
+    grid-template-columns: 1fr;
+  }
+
+  label small {
+    grid-column: 1;
+  }
+}
 </style>
 </head>
+
 <body>
+
 <h1>Excel-Server</h1>
-<label style="grid-template-columns:auto auto;justify-content:start">Excel-Sprache
+
+<label style="grid-template-columns:auto auto;justify-content:start">
+  Excel-Sprache
   <select id="lang" onchange="drawFormulas()">
     <option value="de">Deutsch</option>
     <option value="en">English</option>
@@ -32,179 +147,709 @@
 <div id="status"></div>
 
 <section>
-  <h2>1. Verbindung (einmal pro Excel-Datei)</h2>
+  <h2>1. Verbindung (Excel)</h2>
+
   <ol>
-    <li>In Excel einen <b>Namen</b> für den Datenbereich anlegen (<i>Formeln → Namens-Manager → Neu</i>):
-      Name <input id="rangeName" value="Daten" size="8">, Bezug z.B. <code>=Tabelle1!$A$1:$Z$200</code>.
-      Der Bereich muss bei <b>A1</b> beginnen, damit die Zelladressen (G20 …) stimmen.</li>
-    <li><i>Daten → Neue Abfrage → Aus anderen Quellen → Leere Abfrage</i> → <i>Erweiterter Editor</i> →
-      diesen Code einfügen: <button onclick="copyM(this)">M-Code kopieren</button></li>
-    <li>Abfrage in <b>Ergebnis</b> umbenennen und als Tabelle laden – <b>auf einem anderen Blatt</b> als die Daten.</li>
-    <li>Aktualisieren: <i>Daten → Alle aktualisieren</i>. Automatisch: Abfrageeigenschaften →
-      „Alle X Minuten“ / „Beim Öffnen aktualisieren“.</li>
+    <li>
+      In Excel einen benannten Bereich anlegen.
+      Name:
+      <input id="rangeName" value="Daten" size="8">
+      Bezug beispielsweise:
+      <code>=Tabelle1!$A$1:$Z$200</code>
+    </li>
+
+    <li>
+      In Power Query eine leere Abfrage anlegen.
+      <button onclick="copyM(this)">M-Code kopieren</button>
+    </li>
+
+    <li>
+      Abfrage in Ergebnis umbenennen und als Tabelle laden.
+    </li>
+
+    <li>
+      Mit Daten → Alle aktualisieren aktualisieren.
+    </li>
   </ol>
 </section>
 
 <section>
-  <h2>2. Mit einer Excel-Datei testen</h2>
-  <p>Die Datei wird nur im Speicher gelesen und nicht gespeichert.</p>
-  <label>Datei (.xlsx) <input type="file" id="file" accept=".xlsx"></label>
-  <label>Blattname <input id="blatt" value="Tabelle1"></label>
-  <p><button onclick="testFile()">Testen</button> <span id="testMsg"></span></p>
+  <h2>2. Excel-Datei testen</h2>
+
+  <p>Die Datei wird nur im Speicher gelesen.</p>
+
+  <label>
+    Excel-Datei
+    <input type="file" id="file" accept=".xlsx">
+  </label>
+
+  <label>
+    Blattname
+    <input id="blatt" value="Tabelle1">
+  </label>
+
+  <div class="actions">
+    <button onclick="testFile()">Testen</button>
+    <span id="testMsg"></span>
+  </div>
+
   <div id="testResult"></div>
 </section>
 
-<div id="modules"></div>
+<div id="modules">
+  <section>Module werden geladen ...</section>
+</div>
 
 <section>
-  <h2>Einstellungen sichern</h2>
-  <p>Auf dem kostenlosen Render-Plan gehen gespeicherte Einstellungen bei jedem Neustart verloren.
-     Kopiere diesen Text in Render unter <i>Environment</i> als Variable <code>SETTINGS_JSON</code>,
-     dann sind sie dauerhaft.</p>
+  <h2>Konfiguration exportieren</h2>
+
+  <p>
+    Exportiere die Einstellungen für SETTINGS_JSON in Render.
+  </p>
+
   <button onclick="exportCfg()">Anzeigen</button>
-  <textarea id="export" class="mono" rows="4" readonly style="display:none;margin-top:.5rem"></textarea>
+
+  <textarea
+    id="export"
+    class="mono"
+    rows="8"
+    readonly
+    style="display:none;margin-top:.5rem"
+  ></textarea>
 </section>
 
 <script>
-const $ = s => document.querySelector(s);
+
+// ============================================
+// GRUNDEINSTELLUNGEN
+// ============================================
+
+const $ = selector => document.querySelector(selector);
+
 const FN = {
-  de: { sep: ";", VLOOKUP: "SVERWEIS", FALSE: "FALSCH" },
-  en: { sep: ",", VLOOKUP: "VLOOKUP", FALSE: "FALSE" },
-};
-let MODS = [], INFO = { token: "" };
-
-const esc = s => String(s ?? "").replace(/[&<>"]/g,
-  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-
-async function api(path, opts) {
-  const r = await fetch(path, opts);
-  if (!r.ok) {
-    let msg = await r.text();
-    try { msg = JSON.parse(msg).detail || msg; } catch (e) {}
-    throw new Error(msg);
+  de: {
+    sep: ";",
+    VLOOKUP: "SVERWEIS",
+    FALSE: "FALSCH"
+  },
+  en: {
+    sep: ",",
+    VLOOKUP: "VLOOKUP",
+    FALSE: "FALSE"
   }
-  return r.json();
+};
+
+let MODS = [];
+let INFO = {token: ""};
+
+// ============================================
+// HTML ESCAPING
+// ============================================
+
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"]/g, c => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;"
+  })[c]);
 }
+
+// ============================================
+// API
+// ============================================
+
+async function api(path, opts = {}) {
+
+  const response = await fetch(path, opts);
+
+  if (!response.ok) {
+
+    let message = await response.text();
+
+    try {
+      message = JSON.parse(message).detail || message;
+    } catch (e) {}
+
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+// ============================================
+// DATEN LADEN
+// ============================================
 
 async function load() {
-  INFO = await api("/api/info");
-  MODS = await api("/api/modules");
-  renderModules();
-  showStatus(await api("/api/status"));
+
+  try {
+
+    INFO = await api("/api/info");
+
+    MODS = await api("/api/modules");
+
+    renderModules();
+
+    const status = await api("/api/status");
+
+    showStatus(status);
+
+  } catch (error) {
+
+    $("#status").innerHTML = `
+      <div class="status-box">
+        <b>Fehler:</b> ${esc(error.message)}
+      </div>
+    `;
+
+  }
 }
 
-// ---- Rote Box, wenn beim Start etwas schiefging ----
-function showStatus(st) {
-  const probs = st.fehler.map(f => `Modul „${esc(f.modul)}“ konnte nicht geladen werden: <code>${esc(f.meldung)}</code>`);
-  if (!st.geladen.length)
-    probs.push(`Es ist gar kein Modul geladen. Gefundene Dateien in modules/: ${esc(st.gefunden.join(", ") || "keine")}`);
-  else if (!MODS.some(m => m.config.aktiv))
-    probs.push("Kein Modul ist eingeschaltet. Unten bei einem Modul „Modul aktiv“ anhaken und speichern.");
-  $("#status").innerHTML = probs.length
-    ? `<div style="border:2px solid #c33;border-radius:8px;padding:.6rem 1rem;margin:1rem 0">
-         <b>Problem:</b><ul>${probs.map(p => `<li>${p}</li>`).join("")}</ul></div>`
-    : "";
+// ============================================
+// STATUS
+// ============================================
+
+function showStatus(status) {
+
+  const problems = [];
+
+  (status.fehler || []).forEach(f => {
+
+    problems.push(`
+      Modul ${esc(f.modul)}:
+      ${esc(f.meldung)}
+    `);
+
+  });
+
+  if (!status.geladen.length) {
+
+    problems.push(
+      "Es wurde kein Modul geladen."
+    );
+
+  } else if (!MODS.some(m => m.config.aktiv)) {
+
+    problems.push(
+      "Kein Modul ist aktiviert."
+    );
+
+  }
+
+  $("#status").innerHTML = problems.length
+    ? `
+      <div class="status-box">
+        <b>Problem:</b>
+        <ul>
+          ${problems.map(p => `<li>${p}</li>`).join("")}
+        </ul>
+      </div>
+    `
+    : `
+      <p class="success">
+        ✓ Verbindung erfolgreich.
+        ${MODS.length} Module geladen.
+      </p>
+    `;
 }
 
-// ---- Eingabefeld passend zum Typ der Einstellung ----
-function settingInput(m, f) {
-  const id = `s_${m.id}_${f.name}`, v = m.config.werte[f.name];
-  if (f.type === "bool") return `<input type="checkbox" id="${id}" ${v ? "checked" : ""}>`;
-  if (f.type === "select")
-    return `<select id="${id}">${(f.options || []).map(o => `<option ${o == v ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
-  const numeric = f.type === "int" || f.type === "float";
-  return `<input ${numeric ? 'type="number" step="any"' : 'type="text"'} id="${id}" value="${esc(v)}">`;
+// ============================================
+// SETTING STANDARDWERTE
+// ============================================
+
+function settingValue(module, field) {
+
+  const values = module.config?.werte || {};
+
+  if (
+    Object.prototype.hasOwnProperty.call(values, field.name) &&
+    values[field.name] !== null &&
+    values[field.name] !== undefined
+  ) {
+    return values[field.name];
+  }
+
+  return field.default ?? "";
 }
 
-// ---- Alles pro Modul wird aus dessen Deklaration erzeugt ----
+// ============================================
+// SETTING INPUT
+// ============================================
+
+function settingInput(module, field) {
+
+  const id = `s_${module.id}_${field.name}`;
+
+  const value = settingValue(module, field);
+
+  // Checkbox
+
+  if (field.type === "bool") {
+
+    const checked =
+      value === true ||
+      value === 1 ||
+      ["true", "1", "ja", "wahr", "yes", "on"]
+        .includes(String(value).toLowerCase());
+
+    return `
+      <input
+        type="checkbox"
+        id="${id}"
+        ${checked ? "checked" : ""}
+      >
+    `;
+  }
+
+  // Dropdown
+
+  if (field.type === "select") {
+
+    return `
+      <select id="${id}">
+        ${(field.options || []).map(option => `
+          <option
+            value="${esc(option)}"
+            ${String(option) === String(value) ? "selected" : ""}
+          >
+            ${esc(option)}
+          </option>
+        `).join("")}
+      </select>
+    `;
+  }
+
+  // Zahlenfelder
+
+  const numeric =
+    field.type === "int" ||
+    field.type === "float";
+
+  return `
+    <input
+      id="${id}"
+      type="${numeric ? "number" : "text"}"
+      ${numeric ? 'step="any"' : ""}
+      value="${esc(value)}"
+    >
+  `;
+}
+
+// ============================================
+// MODULE DARSTELLEN
+// ============================================
+
 function renderModules() {
-  $("#modules").innerHTML = MODS.map(m => `
+
+  if (!MODS.length) {
+
+    $("#modules").innerHTML = `
+      <section>
+        <h2>Keine Module gefunden</h2>
+      </section>
+    `;
+
+    return;
+  }
+
+  $("#modules").innerHTML = MODS.map(module => `
+
     <section>
-      <h2>${esc(m.name)}</h2>
-      <p>${esc(m.description)}</p>
-      <label>Modul aktiv <span><input type="checkbox" id="a_${m.id}" ${m.config.aktiv ? "checked" : ""}></span></label>
-      <h3>Zellen in deiner Excel-Datei</h3>
-      ${m.inputs.map(i => `
-        <label>${esc(i.label)}
-          <input id="c_${m.id}_${i.name}" value="${esc(m.config.zellen[i.name])}" placeholder="z.B. G20">
-          ${i.help ? `<small>${esc(i.help)}</small>` : ""}
-        </label>`).join("")}
-      ${m.settings.length ? "<h3>Einstellungen</h3>" + m.settings.map(f => `
-        <label>${esc(f.label)} <span>${settingInput(m, f)}</span>
-          ${f.help ? `<small>${esc(f.help)}</small>` : ""}
-        </label>`).join("") : ""}
-      <p><button onclick="save('${m.id}')">Speichern</button> <span id="msg_${m.id}"></span></p>
+
+      <h2>${esc(module.name)}</h2>
+
+      <p>${esc(module.description)}</p>
+
+      <div class="setting-row">
+
+        <label>
+          Modul aktiv
+
+          <span>
+            <input
+              type="checkbox"
+              id="a_${module.id}"
+              ${module.config.aktiv ? "checked" : ""}
+            >
+          </span>
+        </label>
+
+      </div>
+
+      <h3>Excel-Eingaben</h3>
+
+      ${(module.inputs || []).map(field => `
+
+        <div class="setting-row">
+
+          <label>
+            ${esc(field.label)}
+
+            <input
+              id="c_${module.id}_${field.name}"
+              value="${esc(
+                module.config.zellen[field.name] ??
+                field.cell ??
+                ""
+              )}"
+              placeholder="z.B. G20"
+            >
+
+            ${field.help
+              ? `<small>${esc(field.help)}</small>`
+              : ""}
+          </label>
+
+        </div>
+
+      `).join("")}
+
+      ${module.settings?.length ? `
+
+        <h3>Einstellungen</h3>
+
+        ${(module.settings || []).map(field => `
+
+          <div class="setting-row">
+
+            <label>
+
+              ${esc(field.label)}
+
+              <span>
+                ${settingInput(module, field)}
+              </span>
+
+              ${field.help
+                ? `<small>${esc(field.help)}</small>`
+                : ""}
+
+            </label>
+
+          </div>
+
+        `).join("")}
+
+      ` : ""}
+
+      <div class="actions">
+
+        <button onclick="save('${module.id}')">
+          Speichern
+        </button>
+
+        <span id="msg_${module.id}"></span>
+
+      </div>
+
       <h3>Ergebnisse in Excel abrufen</h3>
-      <div id="fx_${m.id}"></div>
-    </section>`).join("");
+
+      <div id="fx_${module.id}"></div>
+
+    </section>
+
+  `).join("");
+
   drawFormulas();
 }
 
+// ============================================
+// FORMELN
+// ============================================
+
 function drawFormulas() {
-  const f = FN[$("#lang").value];
-  MODS.forEach(m => {
-    $("#fx_" + m.id).innerHTML = m.outputs.map(o => {
-      const fx = `=${f.VLOOKUP}("${m.id}.${o.name}"${f.sep}Ergebnis${f.sep}2${f.sep}${f.FALSE})`;
-      return `<div class="out"><b>${esc(o.label)}</b>
-        <code class="block">${esc(fx)}</code>
-        <button onclick="copyEl(this)">Kopieren</button></div>`;
+
+  const language = FN[$("#lang").value];
+
+  MODS.forEach(module => {
+
+    const container = $("#fx_" + module.id);
+
+    if (!container) return;
+
+    container.innerHTML = (module.outputs || []).map(output => {
+
+      const formula =
+        `=${language.VLOOKUP}("${module.id}.${output.name}"` +
+        `${language.sep}Ergebnis${language.sep}2` +
+        `${language.sep}${language.FALSE})`;
+
+      return `
+        <div class="out">
+
+          <b>${esc(output.label)}</b>
+
+          <code class="block">${esc(formula)}</code>
+
+          <button onclick="copyEl(this)">
+            Kopieren
+          </button>
+
+        </div>
+      `;
+
     }).join("");
+
   });
 }
 
-async function save(mid) {
-  const m = MODS.find(x => x.id === mid), msg = $("#msg_" + mid);
-  const body = { aktiv: $(`#a_${mid}`).checked, zellen: {}, werte: {} };
-  m.inputs.forEach(i => body.zellen[i.name] = $(`#c_${mid}_${i.name}`).value);
-  m.settings.forEach(f => {
-    const el = $(`#s_${mid}_${f.name}`);
-    body.werte[f.name] = f.type === "bool" ? el.checked : el.value;
-  });
+// ============================================
+// SETTING AUSLESEN
+// ============================================
+
+function readSetting(field, element) {
+
+  if (field.type === "bool") {
+    return element.checked;
+  }
+
+  if (field.type === "int") {
+
+    if (element.value.trim() === "") {
+      return field.default ?? null;
+    }
+
+    const value = Number(element.value);
+
+    if (!Number.isInteger(value)) {
+      throw new Error(
+        field.label + ": Bitte eine ganze Zahl eingeben."
+      );
+    }
+
+    return value;
+  }
+
+  if (field.type === "float") {
+
+    if (element.value.trim() === "") {
+      return field.default ?? null;
+    }
+
+    const value = Number(element.value);
+
+    if (!Number.isFinite(value)) {
+      throw new Error(
+        field.label + ": Ungültige Zahl."
+      );
+    }
+
+    return value;
+  }
+
+  return element.value;
+}
+
+// ============================================
+// MODUL SPEICHERN
+// ============================================
+
+async function save(moduleId) {
+
+  const module = MODS.find(m => m.id === moduleId);
+
+  const message = $("#msg_" + moduleId);
+
+  if (!module) return;
+
+  message.textContent = "Speichere ...";
+
+  message.className = "";
+
+  const body = {
+    aktiv: $(`#a_${moduleId}`).checked,
+    zellen: {},
+    werte: {}
+  };
+
   try {
-    await api(`/api/modules/${mid}`, {
-      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+
+    // Excel-Zellen
+
+    module.inputs.forEach(field => {
+
+      body.zellen[field.name] =
+        $(`#c_${moduleId}_${field.name}`).value.trim();
+
     });
-    msg.textContent = "Gespeichert ✓ – in Excel: Daten → Alle aktualisieren";
-    m.config.aktiv = body.aktiv; showStatus(await api("/api/status"));
-  } catch (e) { msg.textContent = "Fehler: " + e.message; }
+
+    // Einstellungen
+
+    module.settings.forEach(field => {
+
+      const element =
+        $(`#s_${moduleId}_${field.name}`);
+
+      body.werte[field.name] =
+        readSetting(field, element);
+
+    });
+
+    // Speichern am Server
+
+    await api(`/api/modules/${moduleId}`, {
+
+      method: "PUT",
+
+      headers: {
+        "Content-Type": "application/json"
+      },
+
+      body: JSON.stringify(body)
+
+    });
+
+    // Lokale Daten aktualisieren
+
+    module.config.aktiv = body.aktiv;
+    module.config.zellen = body.zellen;
+    module.config.werte = body.werte;
+
+    message.textContent =
+      "Gespeichert ✓ – Excel aktualisieren";
+
+    message.className = "success";
+
+    showStatus(await api("/api/status"));
+
+  } catch (error) {
+
+    message.textContent =
+      "Fehler: " + error.message;
+
+    message.className = "error";
+
+  }
 }
 
-// ---- Testlauf mit hochgeladener Datei ----
+// ============================================
+// EXCEL TESTEN
+// ============================================
+
 async function testFile() {
-  const file = $("#file").files[0], msg = $("#testMsg");
-  if (!file) { msg.textContent = "Bitte zuerst eine Datei wählen."; return; }
-  const fd = new FormData();
-  fd.append("file", file);
-  fd.append("blatt", $("#blatt").value);
-  msg.textContent = "Rechne …";
+
+  const file = $("#file").files[0];
+
+  const message = $("#testMsg");
+
+  if (!file) {
+
+    message.textContent =
+      "Bitte zuerst eine Excel-Datei auswählen.";
+
+    return;
+  }
+
+  const formData = new FormData();
+
+  formData.append("file", file);
+
+  formData.append("blatt", $("#blatt").value);
+
+  message.textContent = "Rechne ...";
+
+  $("#testResult").innerHTML = "";
+
   try {
-    const rows = await api("/api/test", { method: "POST", body: fd });
-    msg.textContent = "";
+
+    const rows = await api("/api/test", {
+
+      method: "POST",
+
+      body: formData
+
+    });
+
+    message.textContent = "";
+
     $("#testResult").innerHTML = rows.length
-      ? `<table><tr><th>Name</th><th>Wert</th></tr>${rows.map(r =>
-          `<tr><td>${esc(r.Name)}</td><td>${esc(r.Wert)}</td></tr>`).join("")}</table>`
+
+      ? `
+        <table>
+
+          <tr>
+            <th>Name</th>
+            <th>Wert</th>
+          </tr>
+
+          ${rows.map(row => `
+            <tr>
+              <td>${esc(row.Name)}</td>
+              <td>${esc(row.Wert)}</td>
+            </tr>
+          `).join("")}
+
+        </table>
+      `
+
       : "Keine aktiven Module.";
-  } catch (e) { msg.textContent = "Fehler: " + e.message; }
+
+  } catch (error) {
+
+    message.textContent =
+      "Fehler: " + error.message;
+
+  }
 }
 
-// ---- Kopieren ----
-function copyText(text, btn) {
-  const ta = document.createElement("textarea");
-  ta.value = text; document.body.appendChild(ta); ta.select();
-  document.execCommand("copy"); ta.remove();
-  const old = btn.textContent; btn.textContent = "Kopiert ✓";
-  setTimeout(() => btn.textContent = old, 1500);
-}
-function copyEl(btn) { copyText(btn.previousElementSibling.textContent, btn); }
+// ============================================
+// KOPIEREN
+// ============================================
 
-function copyM(btn) {
-  const name = $("#rangeName").value.trim() || "Daten";
+function copyText(text, button) {
+
+  const textarea = document.createElement("textarea");
+
+  textarea.value = text;
+
+  document.body.appendChild(textarea);
+
+  textarea.select();
+
+  document.execCommand("copy");
+
+  textarea.remove();
+
+  const oldText = button.textContent;
+
+  button.textContent = "Kopiert ✓";
+
+  setTimeout(() => {
+
+    button.textContent = oldText;
+
+  }, 1500);
+
+}
+
+function copyEl(button) {
+
+  copyText(
+    button.previousElementSibling.textContent,
+    button
+  );
+
+}
+
+// ============================================
+// POWER QUERY M-CODE
+// ============================================
+
+function copyM(button) {
+
+  const name =
+    $("#rangeName").value.trim() || "Daten";
+
   const code = `let
     Quelle = Excel.CurrentWorkbook(){[Name="${name}"]}[Content],
     Zeilen = Table.ToRows(Quelle),
     Anfrage = Json.FromValue([zellen = Zeilen]),
     Antwort = Web.Contents("${location.origin}/excel/run", [
-        Headers = [#"Content-Type" = "application/json", #"X-Token" = "${INFO.token}"],
+        Headers = [
+            #"Content-Type" = "application/json",
+            #"X-Token" = "${INFO.token}"
+        ],
         Content = Anfrage,
         Timeout = #duration(0, 0, 2, 0)
     ]),
@@ -212,16 +857,43 @@ function copyM(btn) {
     Tabelle = Table.FromRecords(Antwortdaten, {"Name", "Wert"})
 in
     Tabelle`;
-  copyText(code, btn);
+
+  copyText(code, button);
+
 }
+
+// ============================================
+// KONFIGURATION EXPORT
+// ============================================
 
 async function exportCfg() {
-  const el = $("#export");
-  el.value = JSON.stringify(await api("/api/export"));
-  el.style.display = "block"; el.select();
+
+  const element = $("#export");
+
+  try {
+
+    const data = await api("/api/export");
+
+    element.value = JSON.stringify(data, null, 2);
+
+    element.style.display = "block";
+
+    element.select();
+
+  } catch (error) {
+
+    alert("Export fehlgeschlagen: " + error.message);
+
+  }
 }
 
+// ============================================
+// START
+// ============================================
+
 load();
+
 </script>
+
 </body>
 </html>
