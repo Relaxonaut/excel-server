@@ -518,6 +518,75 @@ function renderInstance(module, instance) {
   `;
 }
 
+  
+function renderModules() {
+
+  $("#modules").innerHTML = MODS.map(module => {
+
+    const instances = module.config.berechnungen || [];
+
+    return `
+      <section>
+
+        <h2>${esc(module.name)}</h2>
+        <p>${esc(module.description)}</p>
+
+        <label>
+          Modul aktiv
+          <input
+            type="checkbox"
+            id="active_${module.id}"
+            ${module.config.aktiv ? "checked" : ""}
+          >
+        </label>
+
+        ${module.settings?.length ? `
+          <h3>Globale Einstellungen</h3>
+
+          ${module.settings.map(field => `
+            <label>
+              ${esc(field.label)}
+              <span>${settingInput(module, field)}</span>
+            </label>
+          `).join("")}
+        ` : ""}
+
+        <h3>Berechnungen</h3>
+
+        <p>${instances.length} Berechnungen eingerichtet.</p>
+
+        <div id="instances_${module.id}">
+          ${instances.map(instance =>
+            renderInstance(module, instance)
+          ).join("")}
+        </div>
+
+        <div class="actions">
+
+          <button onclick="addCalculation('${module.id}')">
+            + Berechnung hinzufügen
+          </button>
+
+          <button onclick="saveModule('${module.id}')">
+            Alle Berechnungen speichern
+          </button>
+
+          <span id="msg_${module.id}"></span>
+
+        </div>
+
+        <h3>Excel-Ergebnisformeln</h3>
+
+        <div id="fx_${module.id}"></div>
+
+      </section>
+    `;
+
+  }).join("");
+
+  drawFormulas();
+}
+
 // ============================================
 // FORMELN
 // ============================================
