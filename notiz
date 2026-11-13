@@ -1,0 +1,959 @@
+Wir bauen das jetzt sauber in `main.py` ein. Ziel ist, dass du:
+
+- Beliebig viele Lohnsteuerberechnungen im UI hinzufügen kannst.
+- Jede Berechnung eigene Excel-Zellen bekommt.
+- Jede Berechnung einzeln aktivieren und deaktivieren kannst.
+- Globale Einstellungen wie Kirchensteuer und KV-Zusatzbeitrag weiterhin gemeinsam verwendest.
+- Alle Berechnungen beim Excel-Aufruf automatisch ausgeführt bekommst.
+- Eindeutige Ergebnisnamen für Excel erhältst.
+
+Wichtig: Wir verwenden weiterhin deine vorhandene `core.base`-Klasse und deinen Render-Free-Plan. Es wird keine zusätzliche Datenbank benötigt. Die Konfiguration wird über `SETTINGS_JSON` bereitgestellt; Änderungen im laufenden Betrieb sind auf dem Free-Plan nicht dauerhaft garantiert.
+
+## 1. `main.py` vollständig ersetzen
+
+Diese Version unterstützt mehrere unabhängige Berechnungen pro Modul. Sie ersetzt die bisherige Speicherung über `store.py` durch eine In-Memory-Konfiguration mit optionalen Startwerten aus `SETTINGS_JSON`.
+
+python
+
+```python
+
+"""
+Excel-Server mit Mehrfachberechnungen.
+
+- Beliebig viele Berechnungen pro Modul
+- Individuelle Excel-Zellzuordnungen
+- Individuelle Aktivierung jeder Berechnung
+- Gemeinsame Moduleinstellungen
+- Eindeutige Excel-Ergebnisnamen
+- Konfiguration im Arbeitsspeicher
+- Optional SETTINGS_JSON als Startkonfiguration
+
+Start:
+uvicorn main:app --host 0.0.0.0 --port 8000
+"""
+
+import copy
+import hmac
+import importlib
+import io
+import json
+import os
+import pkgutil
+
+from pathlib import Path
+from dataclasses import asdict
+
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+)
+from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+
+import modules
+
+from core.base import Module, cell_value, coerce
+
+
+# ==================================================
+# KONFIGURATION
+# ==================================================
+
+API_TOKEN = os.environ.get("API_TOKEN", "")
+UI_PASSWORD = os.environ.get("UI_PASSWORD", "")
+
+if os.environ.get("RENDER") and not (API_TOKEN and UI_PASSWORD):
+    raise RuntimeError(
+        "Auf Render muessen API_TOKEN und UI_PASSWORD gesetzt sein."
+    )
+
+
+# ==================================================
+# IN-MEMORY SPEICHER
+# ==================================================
+
+def load_initial_config():
+    raw = os.environ.get("SETTINGS_JSON", "").strip()
+
+    if not raw:
+        return {}
+
+    try:
+        result = json.loads(raw)
+
+        if not isinstance(result, dict):
+            raise ValueError("SETTINGS_JSON muss ein JSON-Objekt sein.")
+
+        return result
+
+    except Exception as e:
+        print(f"[WARNUNG] SETTINGS_JSON ungueltig: {e}")
+        return {}
+
+
+CONFIG = load_initial_config()
+
+
+# ==================================================
+# MODULE AUTOMATISCH LADEN
+# ==================================================
+
+LOAD_ERRORS = []
+
+FOUND = [
+    item.name
+    for item in pkgutil.iter_modules(modules.__path__)
+]
+
+for name in FOUND:
+    try:
+        importlib.import_module(f"modules.{name}")
+
+    except Exception as e:
+        LOAD_ERRORS.append({
+            "modul": name,
+            "meldung": f"{type(e).__name__}: {e}",
+        })
+
+        print(
+            f"[WARNUNG] Modul {name} konnte nicht geladen werden: {e}"
+        )
+
+
+for mod in Module.registry.values():
+    mod.discover_outputs()
+
+
+app = FastAPI(title="Excel-Server")
+
+
+# ==================================================
+# AUTHENTIFIZIERUNG
+# ==================================================
+
+_basic = HTTPBasic(auto_error=False)
+
+
+def _gleich(a: str, b: str) -> bool:
+    return hmac.compare_digest(
+        a.encode(),
+        b.encode()
+    )
+
+
+def ui_auth(
+    creds: HTTPBasicCredentials | None = Depends(_basic)
+):
+    if UI_PASSWORD and not (
+        creds and _gleich(creds.password, UI_PASSWORD)
+    ):
+        raise HTTPException(
+            401,
+            "Passwort notwendig",
+            headers={
+                "WWW-Authenticate": 'Basic realm="Excel-Server"'
+            },
+        )
+
+
+def token_auth(
+    x_token: str | None = Header(default=None)
+):
+    if API_TOKEN and not (
+        x_token and _gleich(x_token, API_TOKEN)
+    ):
+        raise HTTPException(401, "Token falsch")
+
+
+# ==================================================
+# STANDARD-BERECHNUNG ERSTELLEN
+# ==================================================
+
+def default_instance(mod: Module) -> dict:
+    return {
+        "id": "1",
+        "name": "Berechnung 1",
+        "aktiv": True,
+        "zellen": {
+            field.name: field.cell or ""
+            for field in mod.inputs
+        },
+    }
+
+
+# ==================================================
+# MODULKONFIGURATION
+# ==================================================
+
+def config_for(mod: Module) -> dict:
+
+    saved = CONFIG.get(mod.id, {})
+
+    if not isinstance(saved, dict):
+        saved = {}
+
+    werte = {}
+
+    for field in mod.settings:
+        werte[field.name] = saved.get(
+            "werte", {}
+        ).get(
+            field.name,
+            field.default
+        )
+
+    # Bestehende Berechnungen übernehmen
+    if "berechnungen" in saved:
+
+        berechnungen = copy.deepcopy(
+            saved.get("berechnungen") or []
+        )
+
+    else:
+        # Alte Einzelkonfiguration migrieren
+        instance = default_instance(mod)
+
+        instance["zellen"].update(
+            saved.get("zellen", {})
+        )
+
+        berechnungen = [instance]
+
+    # Fehlende Zellzuordnungen ergänzen
+    for instance in berechnungen:
+
+        instance.setdefault("id", str(id(instance)))
+        instance.setdefault("name", "Berechnung")
+        instance.setdefault("aktiv", True)
+        instance.setdefault("zellen", {})
+
+        for field in mod.inputs:
+            if not instance["zellen"].get(field.name):
+                instance["zellen"][field.name] = field.cell or ""
+
+    return {
+        "aktiv": saved.get(
+            "aktiv",
+            mod.aktiv_standard
+        ),
+        "werte": werte,
+        "berechnungen": berechnungen,
+
+        # Kompatibilität mit alter Konfiguration
+        "zellen": (
+            berechnungen[0]["zellen"]
+            if berechnungen
+            else {}
+        ),
+    }
+
+
+# ==================================================
+# JSON-VERTRÄGLICHE WERTE
+# ==================================================
+
+def jsonable(value):
+
+    if value is None:
+        return None
+
+    if isinstance(value, (bool, int, str)):
+        return value
+
+    if isinstance(value, float):
+
+        if value == value and abs(value) != float("inf"):
+            return value
+
+        return str(value)
+
+    return str(value)
+
+
+# ==================================================
+# ALLE BERECHNUNGEN AUSFÜHREN
+# ==================================================
+
+def run_all(grid: list) -> list[dict]:
+
+    rows = []
+
+    for mod in Module.registry.values():
+
+        cfg = config_for(mod)
+
+        # Gesamtes Modul deaktiviert
+        if not cfg["aktiv"]:
+            continue
+
+        berechnungen = cfg["berechnungen"]
+
+        for index, instance in enumerate(berechnungen, start=1):
+
+            # Einzelne Berechnung deaktiviert
+            if not instance.get("aktiv", True):
+                continue
+
+            # Eindeutiger Name für Excel
+            prefix = (
+                f"{mod.id}.berechnung_{index}"
+            )
+
+            try:
+
+                result = mod.run_grid(
+                    grid,
+                    {
+                        "zellen": instance["zellen"],
+                        "werte": cfg["werte"],
+                    },
+                )
+
+                for key, value in result.items():
+
+                    rows.append({
+                        "Name": f"{prefix}.{key}",
+                        "Wert": jsonable(value),
+                    })
+
+            except Exception as e:
+
+                rows.append({
+                    "Name": f"{prefix}._fehler",
+                    "Wert": str(e),
+                })
+
+    return rows
+
+
+# ==================================================
+# EXCEL-SCHNITTSTELLE
+# ==================================================
+
+@app.post(
+    "/excel/run",
+    dependencies=[Depends(token_auth)]
+)
+async def excel_run(request: Request):
+
+    try:
+        body = await request.json()
+
+    except Exception:
+        raise HTTPException(400, "Ungueltiges JSON")
+
+    grid = (
+        body.get("zellen")
+        if isinstance(body, dict)
+        else None
+    )
+
+    if not isinstance(grid, list):
+        raise HTTPException(
+            400,
+            'Erwartet JSON {"zellen": [[...], [...]]}'
+        )
+
+    return run_all(grid)
+
+
+# ==================================================
+# HEALTH CHECK
+# ==================================================
+
+@app.get(
+    "/healthz",
+    response_class=PlainTextResponse
+)
+def healthz():
+    return "ok"
+
+
+# ==================================================
+# WEBOBERFLÄCHE
+# ==================================================
+
+@app.get(
+    "/",
+    response_class=HTMLResponse,
+    dependencies=[Depends(ui_auth)]
+)
+def ui():
+
+    return (
+        Path(__file__).parent / "ui.html"
+    ).read_text("utf-8")
+
+
+# ==================================================
+# API INFORMATION
+# ==================================================
+
+@app.get(
+    "/api/info",
+    dependencies=[Depends(ui_auth)]
+)
+def info():
+    return {
+        "token": API_TOKEN
+    }
+
+
+# ==================================================
+# STATUS
+# ==================================================
+
+@app.get(
+    "/api/status",
+    dependencies=[Depends(ui_auth)]
+)
+def status():
+
+    return {
+        "gefunden": FOUND,
+        "geladen": list(Module.registry),
+        "fehler": LOAD_ERRORS,
+    }
+
+
+# ==================================================
+# MODULE AUFLISTEN
+# ==================================================
+
+@app.get(
+    "/api/modules",
+    dependencies=[Depends(ui_auth)]
+)
+def list_modules():
+
+    result = []
+
+    for mod in Module.registry.values():
+
+        result.append({
+            "id": mod.id,
+            "name": mod.name,
+            "description": mod.description,
+
+            "inputs": [
+                asdict(field)
+                for field in mod.inputs
+            ],
+
+            "settings": [
+                asdict(field)
+                for field in mod.settings
+            ],
+
+            "outputs": [
+                asdict(output)
+                for output in mod.outputs
+            ],
+
+            "config": config_for(mod),
+        })
+
+    return result
+
+
+# ==================================================
+# MODUL SPEICHERN
+# ==================================================
+
+@app.put(
+    "/api/modules/{module_id}",
+    dependencies=[Depends(ui_auth)]
+)
+async def save_module(
+    module_id: str,
+    request: Request
+):
+
+    mod = Module.registry.get(module_id)
+
+    if mod is None:
+        raise HTTPException(
+            404,
+            "Modul unbekannt"
+        )
+
+    try:
+
+        body = await request.json()
+
+        # Globale Einstellungen
+        werte = {}
+
+        for field in mod.settings:
+
+            raw = body.get(
+                "werte", {}
+            ).get(
+                field.name,
+                field.default
+            )
+
+            werte[field.name] = coerce(
+                field,
+                raw
+            )
+
+        # Mehrfachberechnungen
+        raw_instances = body.get(
+            "berechnungen",
+            []
+        )
+
+        if not isinstance(raw_instances, list):
+            raise ValueError(
+                "berechnungen muss eine Liste sein."
+            )
+
+        berechnungen = []
+        verwendete_ids = set()
+
+        for index, instance in enumerate(
+            raw_instances,
+            start=1
+        ):
+
+            instance_id = str(
+                instance.get("id") or index
+            )
+
+            if instance_id in verwendete_ids:
+                raise ValueError(
+                    f"Doppelte Berechnungs-ID: {instance_id}"
+                )
+
+            verwendete_ids.add(instance_id)
+
+            zellen = {}
+
+            for field in mod.inputs:
+
+                adresse = str(
+                    instance.get(
+                        "zellen", {}
+                    ).get(
+                        field.name,
+                        field.cell or ""
+                    )
+                ).strip()
+
+                if adresse:
+                    # Zelladresse validieren
+                    cell_value([], adresse)
+
+                zellen[field.name] = adresse
+
+            berechnungen.append({
+
+                "id": instance_id,
+
+                "name": str(
+                    instance.get(
+                        "name",
+                        f"Berechnung {index}"
+                    )
+                ),
+
+                "aktiv": bool(
+                    instance.get("aktiv", True)
+                ),
+
+                "zellen": zellen,
+            })
+
+        # Gesamtkonfiguration
+        config = {
+
+            "aktiv": bool(
+                body.get(
+                    "aktiv",
+                    mod.aktiv_standard
+                )
+            ),
+
+            "werte": werte,
+
+            "berechnungen": berechnungen,
+
+            # Kompatibilität
+            "zellen": (
+                berechnungen[0]["zellen"]
+                if berechnungen
+                else {}
+            ),
+        }
+
+        # Im Arbeitsspeicher aktualisieren
+        CONFIG[module_id] = config
+
+        return {
+            "ok": True,
+            "anzahl": len(berechnungen),
+            "gespeichert": True,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+
+        raise HTTPException(
+            400,
+            str(e)
+        )
+
+
+# ==================================================
+# KONFIGURATION EXPORT
+# ==================================================
+
+@app.get(
+    "/api/export",
+    dependencies=[Depends(ui_auth)]
+)
+def export_config():
+
+    return {
+        mod.id: config_for(mod)
+        for mod in Module.registry.values()
+    }
+
+
+# ==================================================
+# EXCEL-DATEI TESTEN
+# ==================================================
+
+@app.post(
+    "/api/test",
+    dependencies=[Depends(ui_auth)]
+)
+async def test_file(
+    file: UploadFile = File(...),
+    blatt: str = Form("")
+):
+
+    import openpyxl
+
+    try:
+
+        content = await file.read()
+
+        wb = openpyxl.load_workbook(
+            io.BytesIO(content),
+            data_only=True
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            400,
+            f"Datei nicht lesbar: {e}"
+        )
+
+    if blatt and blatt in wb.sheetnames:
+        ws = wb[blatt]
+    else:
+        ws = wb.worksheets[0]
+
+    grid = [
+        list(row)
+        for row in ws.iter_rows(
+            values_only=True
+        )
+    ]
+
+    return run_all(grid)
+```
+
+## 2. `ui.html` anpassen
+
+Dein bisheriges HTML hat noch einen alten Speichermechanismus. Deshalb müssen wir drei Funktionen ergänzen bzw. ersetzen.
+
+### A. Diese Hilfsfunktionen hinzufügen
+
+Füge sie direkt unter `renderInstance()` ein:
+
+javascript
+
+```javascript
+
+function newId() {
+  return "calc_" +
+    Date.now().toString(36) + "_" +
+    Math.random().toString(36).slice(2, 8);
+}
+
+
+// Eine Berechnung aus dem UI auslesen
+function readInstance(module, instance) {
+
+  const nameElement = document.getElementById(
+    `name_${module.id}_${instance.id}`
+  );
+
+  const activeElement = document.getElementById(
+    `active_${module.id}_${instance.id}`
+  );
+
+  const zellen = {};
+
+  module.inputs.forEach(field => {
+
+    const element = document.getElementById(
+      `cell_${module.id}_${instance.id}_${field.name}`
+    );
+
+    zellen[field.name] = element
+      ? element.value.trim()
+      : (instance.zellen?.[field.name] || field.cell || "");
+
+  });
+
+  return {
+    id: instance.id,
+    name: nameElement ? nameElement.value : instance.name,
+    aktiv: activeElement ? activeElement.checked : true,
+    zellen
+  };
+}
+
+
+// Berechnung entfernen
+function removeCalculation(moduleId, instanceId) {
+
+  const module = MODS.find(m => m.id === moduleId);
+
+  if (!module) return;
+
+  module.config.berechnungen =
+    (module.config.berechnungen || [])
+      .map(instance => readInstance(module, instance))
+      .filter(instance => instance.id !== instanceId);
+
+  renderModules();
+}
+```
+
+### B. `save()` vollständig ersetzen
+
+Deine bisherige Funktion `save()` sucht noch nach den alten IDs `a_` und `c_`. Diese existieren in deinem neuen UI nicht mehr.
+
+Ersetze sie durch:
+
+javascript
+
+```javascript
+
+async function saveModule(moduleId) {
+
+  const module = MODS.find(m => m.id === moduleId);
+
+  const message = document.getElementById(
+    `msg_${moduleId}`
+  );
+
+  if (!module) return;
+
+  try {
+
+    message.textContent = "Speichere ...";
+    message.className = "";
+
+    // Alle Berechnungen aus dem UI auslesen
+    const berechnungen =
+      (module.config.berechnungen || [])
+        .map(instance => readInstance(module, instance));
+
+    // Globale Einstellungen auslesen
+    const werte = {};
+
+    module.settings.forEach(field => {
+
+      const element = document.getElementById(
+        `s_${moduleId}_${field.name}`
+      );
+
+      werte[field.name] = readSetting(field, element);
+
+    });
+
+    // Gesamte Konfiguration
+    const body = {
+
+      aktiv: document.getElementById(
+        `active_${moduleId}`
+      ).checked,
+
+      werte,
+
+      berechnungen
+
+    };
+
+    // An Server senden
+    const result = await api(
+      `/api/modules/${moduleId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      }
+    );
+
+    // Lokale Konfiguration aktualisieren
+    module.config.aktiv = body.aktiv;
+    module.config.werte = body.werte;
+    module.config.berechnungen = body.berechnungen;
+
+    module.config.zellen =
+      berechnungen[0]?.zellen || {};
+
+    message.textContent =
+      `✓ ${result.anzahl} Berechnungen gespeichert`;
+
+    message.className = "success";
+
+    showStatus(await api("/api/status"));
+
+  } catch (error) {
+
+    message.textContent =
+      "Fehler: " + error.message;
+
+    message.className = "error";
+
+  }
+}
+```
+
+### C. `drawFormulas()` ersetzen
+
+Das ist wichtig, damit auch für die zweite, dritte und weitere Berechnungen eigene Excel-Formeln angezeigt werden.
+
+javascript
+
+```javascript
+
+function drawFormulas() {
+
+  const language = FN[$("#lang").value];
+
+  MODS.forEach(module => {
+
+    const container = $(`#fx_${module.id}`);
+
+    if (!container) return;
+
+    const instances =
+      module.config.berechnungen || [];
+
+    let html = "";
+
+    instances.forEach((instance, index) => {
+
+      const prefix =
+        `${module.id}.berechnung_${index + 1}`;
+
+      html += `
+        <h4>${esc(instance.name)}</h4>
+      `;
+
+      (module.outputs || []).forEach(output => {
+
+        const formula =
+          `=${language.VLOOKUP}("${prefix}.${output.name}"` +
+          `${language.sep}Ergebnis${language.sep}2` +
+          `${language.sep}${language.FALSE})`;
+
+        html += `
+          <div class="out">
+
+            <b>${esc(output.label)}</b>
+
+            <code class="block">${esc(formula)}</code>
+
+            <button onclick="copyEl(this)">
+              Kopieren
+            </button>
+
+          </div>
+        `;
+
+      });
+
+    });
+
+    container.innerHTML = html;
+
+  });
+}
+```
+
+## 3. So sieht das Ergebnis anschließend aus
+
+Angenommen, du legst drei Berechnungen an:
+
+Lohnsteuer
+
+Aktiv
+
+Berechnung 1 – Mitarbeiter A
+
+Brutto: G20 · Steuerklasse: C20
+
+Aktiv
+
+Berechnung 2 – Mitarbeiter B
+
+Brutto: H5 · Steuerklasse: H6
+
+Aktiv
+
+Berechnung 3 – Mitarbeiter C
+
+Brutto: J10 · Steuerklasse: J11
+
+Aktiv
+
+BEISPIEL DER EXCEL-ERGEBNISNAMEN
+
+text
+
+```text
+lohnsteuer.berechnung_1.brutto
+lohnsteuer.berechnung_1.lohnsteuer
+
+lohnsteuer.berechnung_2.brutto
+lohnsteuer.berechnung_2.lohnsteuer
+
+lohnsteuer.berechnung_3.brutto
+lohnsteuer.berechnung_3.lohnsteuer
+```
+
+Die tatsächlichen Ergebnisnamen hängen von den Rückgabefeldern deiner Lohnsteuerbibliothek ab.
+
+## 4\. Deployment
+
+1. `main.py` vollständig ersetzen.
+2. Die drei JavaScript-Änderungen in `ui.html` übernehmen.
+3. Beide Dateien auf GitHub pushen.
+4. Render neu deployen.
+5. UI mit `Strg + F5` neu laden.
+6. Berechnungen hinzufügen und speichern.
+7. Excel → Daten → Alle aktualisieren.
+
+Wichtiger Hinweis zum Render-Free-Plan: Die Konfiguration bleibt im Arbeitsspeicher nur bis zum Neustart des Servers erhalten. Für dauerhafte Wiederherstellung kannst du die exportierte Konfiguration als `SETTINGS_JSON` in Render hinterlegen.
+
+Damit sind Backend und UI auf dasselbe Mehrfachberechnungsformat umgestellt.
