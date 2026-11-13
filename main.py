@@ -34,8 +34,8 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 import modules
 from core import store
-from core.base import Module, coerce, valid_cell
 
+from core.base import Module, cell_value, coerce
 
 API_TOKEN = os.environ.get("API_TOKEN", "")
 UI_PASSWORD = os.environ.get("UI_PASSWORD", "")
