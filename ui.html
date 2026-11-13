@@ -440,46 +440,51 @@ function settingInput(module, field) {
 // MODULE DARSTELLEN
 // ============================================
 
-function renderModules() {
 
-  if (!MODS.length) {
+function renderInstance(module, instance) {
 
-    $("#modules").innerHTML = `
-      <section>
-        <h2>Keine Module gefunden</h2>
-      </section>
-    `;
+  // Fehlende Zellzuordnungen automatisch initialisieren
+  instance.zellen = instance.zellen || {};
 
-    return;
-  }
+  module.inputs.forEach(field => {
+    if (
+      instance.zellen[field.name] === undefined ||
+      instance.zellen[field.name] === null
+    ) {
+      instance.zellen[field.name] = field.cell || "";
+    }
+  });
 
-  $("#modules").innerHTML = MODS.map(module => `
+  return `
 
-    <section>
+    <div class="instance" id="instance_${module.id}_${instance.id}">
 
-      <h2>${esc(module.name)}</h2>
+      <div class="instance-header">
 
-      <p>${esc(module.description)}</p>
+        <h3>
+          <input
+            type="text"
+            id="name_${module.id}_${instance.id}"
+            value="${esc(instance.name)}"
+          >
+        </h3>
 
-      <div class="setting-row">
-
-        <label>
-          Modul aktiv
-
-          <span>
-            <input
-              type="checkbox"
-              id="a_${module.id}"
-              ${module.config.aktiv ? "checked" : ""}
-            >
-          </span>
+        <label style="grid-template-columns:auto auto">
+          Aktiv
+          <input
+            type="checkbox"
+            id="active_${module.id}_${instance.id}"
+            ${instance.aktiv !== false ? "checked" : ""}
+          >
         </label>
 
       </div>
 
-      <h3>Excel-Eingaben</h3>
+      <p class="secondary">
+        Individuelle Excel-Zellzuordnungen
+      </p>
 
-      ${(module.inputs || []).map(field => `
+      ${module.inputs.map(field => `
 
         <div class="setting-row">
 
@@ -487,71 +492,30 @@ function renderModules() {
             ${esc(field.label)}
 
             <input
-              id="c_${module.id}_${field.name}"
-              value="${esc(
-                module.config.zellen[field.name] ??
-                field.cell ??
-                ""
-              )}"
+              type="text"
+              id="cell_${module.id}_${instance.id}_${field.name}"
+              value="${esc(instance.zellen[field.name])}"
               placeholder="z.B. G20"
             >
-
-            ${field.help
-              ? `<small>${esc(field.help)}</small>`
-              : ""}
           </label>
 
         </div>
 
       `).join("")}
 
-      ${module.settings?.length ? `
-
-        <h3>Einstellungen</h3>
-
-        ${(module.settings || []).map(field => `
-
-          <div class="setting-row">
-
-            <label>
-
-              ${esc(field.label)}
-
-              <span>
-                ${settingInput(module, field)}
-              </span>
-
-              ${field.help
-                ? `<small>${esc(field.help)}</small>`
-                : ""}
-
-            </label>
-
-          </div>
-
-        `).join("")}
-
-      ` : ""}
-
       <div class="actions">
 
-        <button onclick="save('${module.id}')">
-          Speichern
+        <button
+          class="danger"
+          onclick="removeCalculation('${module.id}','${instance.id}')"
+        >
+          Berechnung entfernen
         </button>
-
-        <span id="msg_${module.id}"></span>
 
       </div>
 
-      <h3>Ergebnisse in Excel abrufen</h3>
-
-      <div id="fx_${module.id}"></div>
-
-    </section>
-
-  `).join("");
-
-  drawFormulas();
+    </div>
+  `;
 }
 
 // ============================================
