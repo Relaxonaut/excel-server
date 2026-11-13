@@ -436,89 +436,119 @@ function settingInput(module, field) {
   `;
 }
 
+
 // ============================================
-// MODULE DARSTELLEN
+// MEHRERE BERECHNUNGEN
 // ============================================
 
+function newId() {
+  return "calc_" + Date.now() + "_" +
+    Math.random().toString(36).slice(2, 8);
+}
+
+// Einzelne Berechnung aus dem UI auslesen
+function readInstance(module, instance) {
+
+  const id = instance.id;
+
+  const nameElement = document.getElementById(
+    `name_${module.id}_${id}`
+  );
+
+  const activeElement = document.getElementById(
+    `active_${module.id}_${id}`
+  );
+
+  const zellen = {};
+
+  module.inputs.forEach(field => {
+    const element = document.getElementById(
+      `cell_${module.id}_${id}_${field.name}`
+    );
+
+    zellen[field.name] = element
+      ? element.value.trim()
+      : (instance.zellen?.[field.name] || field.cell || "");
+  });
+
+  return {
+    id,
+    name: nameElement
+      ? nameElement.value
+      : instance.name,
+    aktiv: activeElement
+      ? activeElement.checked
+      : instance.aktiv !== false,
+    zellen
+  };
+}
+
+// ============================================
+// EINZELNE BERECHNUNG DARSTELLEN
+// ============================================
 
 function renderInstance(module, instance) {
 
-  // Fehlende Zellzuordnungen automatisch initialisieren
   instance.zellen = instance.zellen || {};
 
   module.inputs.forEach(field => {
-    if (
-      instance.zellen[field.name] === undefined ||
-      instance.zellen[field.name] === null
-    ) {
+    if (!instance.zellen[field.name]) {
       instance.zellen[field.name] = field.cell || "";
     }
   });
 
   return `
+    <section class="instance"
+      id="instance_${module.id}_${instance.id}">
 
-    <div class="instance" id="instance_${module.id}_${instance.id}">
+      <h3>Berechnung</h3>
 
-      <div class="instance-header">
+      <label>
+        Name
+        <input
+          type="text"
+          id="name_${module.id}_${instance.id}"
+          value="${esc(instance.name)}"
+        >
+      </label>
 
-        <h3>
-          <input
-            type="text"
-            id="name_${module.id}_${instance.id}"
-            value="${esc(instance.name)}"
-          >
-        </h3>
+      <label>
+        Aktiv
+        <input
+          type="checkbox"
+          id="active_${module.id}_${instance.id}"
+          ${instance.aktiv !== false ? "checked" : ""}
+        >
+      </label>
 
-        <label style="grid-template-columns:auto auto">
-          Aktiv
-          <input
-            type="checkbox"
-            id="active_${module.id}_${instance.id}"
-            ${instance.aktiv !== false ? "checked" : ""}
-          >
-        </label>
-
-      </div>
-
-      <p class="secondary">
-        Individuelle Excel-Zellzuordnungen
-      </p>
+      <h4>Excel-Zellzuordnungen</h4>
 
       ${module.inputs.map(field => `
-
-        <div class="setting-row">
-
-          <label>
-            ${esc(field.label)}
-
-            <input
-              type="text"
-              id="cell_${module.id}_${instance.id}_${field.name}"
-              value="${esc(instance.zellen[field.name])}"
-              placeholder="z.B. G20"
-            >
-          </label>
-
-        </div>
-
+        <label>
+          ${esc(field.label)}
+          <input
+            type="text"
+            id="cell_${module.id}_${instance.id}_${field.name}"
+            value="${esc(instance.zellen[field.name])}"
+            placeholder="${esc(field.cell || "z.B. G20")}"
+          >
+        </label>
       `).join("")}
 
-      <div class="actions">
+      <button
+        type="button"
+        onclick="removeCalculation('${module.id}','${instance.id}')">
+        Berechnung entfernen
+      </button>
 
-        <button
-          class="danger"
-          onclick="removeCalculation('${module.id}','${instance.id}')"
-        >
-          Berechnung entfernen
-        </button>
-
-      </div>
-
-    </div>
+    </section>
   `;
 }
 
-  
+// ============================================
+// MODULE DARSTELLEN
+// ============================================
+
 function renderModules() {
 
   $("#modules").innerHTML = MODS.map(module => {
@@ -540,7 +570,7 @@ function renderModules() {
           >
         </label>
 
-        ${module.settings?.length ? `
+        ${module.settings.length ? `
           <h3>Globale Einstellungen</h3>
 
           ${module.settings.map(field => `
@@ -551,9 +581,7 @@ function renderModules() {
           `).join("")}
         ` : ""}
 
-        <h3>Berechnungen</h3>
-
-        <p>${instances.length} Berechnungen eingerichtet.</p>
+        <h3>Berechnungen (${instances.length})</h3>
 
         <div id="instances_${module.id}">
           ${instances.map(instance =>
@@ -563,11 +591,15 @@ function renderModules() {
 
         <div class="actions">
 
-          <button onclick="addCalculation('${module.id}')">
+          <button
+            type="button"
+            onclick="addCalculation('${module.id}')">
             + Berechnung hinzufügen
           </button>
 
-          <button onclick="saveModule('${module.id}')">
+          <button
+            type="button"
+            onclick="saveModule('${module.id}')">
             Alle Berechnungen speichern
           </button>
 
@@ -587,22 +619,25 @@ function renderModules() {
   drawFormulas();
 }
 
+// ============================================
+// BERECHNUNG HINZUFÜGEN
+// ============================================
+
 function addCalculation(moduleId) {
 
   const module = MODS.find(m => m.id === moduleId);
 
   if (!module) {
-    alert("Modul nicht gefunden!");
+    alert("Modul nicht gefunden.");
     return;
   }
 
-  // Vorhandene Berechnungen und Eingaben übernehmen
+  // Bestehende Eingaben übernehmen
   module.config.berechnungen =
     (module.config.berechnungen || []).map(instance =>
       readInstance(module, instance)
     );
 
-  // Neue Berechnung erstellen
   const instance = {
     id: newId(),
     name: `Berechnung ${module.config.berechnungen.length + 1}`,
@@ -610,19 +645,16 @@ function addCalculation(moduleId) {
     zellen: {}
   };
 
-  // Standard-Excel-Zellen übernehmen
+  // Standardzellen übernehmen
   module.inputs.forEach(field => {
     instance.zellen[field.name] = field.cell || "";
   });
 
-  // Hinzufügen
   module.config.berechnungen.push(instance);
 
-  // UI aktualisieren
   renderModules();
 
-  // Zur neuen Berechnung scrollen
-  setTimeout(() => {
+  requestAnimationFrame(() => {
     const element = document.getElementById(
       `instance_${moduleId}_${instance.id}`
     );
@@ -633,11 +665,34 @@ function addCalculation(moduleId) {
         block: "center"
       });
     }
-  }, 50);
+  });
 }
 
 // ============================================
-// FORMELN
+// BERECHNUNG ENTFERNEN
+// ============================================
+
+function removeCalculation(moduleId, instanceId) {
+
+  const module = MODS.find(m => m.id === moduleId);
+
+  if (!module) return;
+
+  module.config.berechnungen =
+    (module.config.berechnungen || []).map(instance =>
+      readInstance(module, instance)
+    );
+
+  module.config.berechnungen =
+    module.config.berechnungen.filter(
+      instance => instance.id !== instanceId
+    );
+
+  renderModules();
+}
+
+// ============================================
+// EXCEL-FORMELN
 // ============================================
 
 function drawFormulas() {
@@ -650,25 +705,39 @@ function drawFormulas() {
 
     if (!container) return;
 
-    container.innerHTML = (module.outputs || []).map(output => {
+    const instances = module.config.berechnungen || [];
 
-      const formula =
-        `=${language.VLOOKUP}("${module.id}.${output.name}"` +
-        `${language.sep}Ergebnis${language.sep}2` +
-        `${language.sep}${language.FALSE})`;
+    container.innerHTML = instances.map(instance => {
 
       return `
-        <div class="out">
+        <h4>${esc(instance.name)}</h4>
 
-          <b>${esc(output.label)}</b>
+        ${(module.outputs || []).map(output => {
 
-          <code class="block">${esc(formula)}</code>
+          const key =
+            `${module.id}.${instance.id}.${output.name}`;
 
-          <button onclick="copyEl(this)">
-            Kopieren
-          </button>
+          const formula =
+            `=${language.VLOOKUP}("${key}"` +
+            `${language.sep}Ergebnis${language.sep}2` +
+            `${language.sep}${language.FALSE})`;
 
-        </div>
+          return `
+            <div class="out">
+
+              <b>${esc(output.label)}</b>
+
+              <code class="block">${esc(formula)}</code>
+
+              <button onclick="copyEl(this)">
+                Kopieren
+              </button>
+
+            </div>
+          `;
+
+        }).join("")}
+
       `;
 
     }).join("");
@@ -677,7 +746,7 @@ function drawFormulas() {
 }
 
 // ============================================
-// SETTING AUSLESEN
+// EINSTELLUNGEN AUSLESEN
 // ============================================
 
 function readSetting(field, element) {
@@ -688,7 +757,7 @@ function readSetting(field, element) {
 
   if (field.type === "int") {
 
-    if (element.value.trim() === "") {
+    if (!element.value.trim()) {
       return field.default ?? null;
     }
 
@@ -705,7 +774,7 @@ function readSetting(field, element) {
 
   if (field.type === "float") {
 
-    if (element.value.trim() === "") {
+    if (!element.value.trim()) {
       return field.default ?? null;
     }
 
@@ -724,76 +793,66 @@ function readSetting(field, element) {
 }
 
 // ============================================
-// MODUL SPEICHERN
+// ALLE BERECHNUNGEN SPEICHERN
 // ============================================
 
-async function save(moduleId) {
+async function saveModule(moduleId) {
 
   const module = MODS.find(m => m.id === moduleId);
 
-  const message = $("#msg_" + moduleId);
-
   if (!module) return;
 
+  const message = $("#msg_" + moduleId);
+
   message.textContent = "Speichere ...";
-
   message.className = "";
-
-  const body = {
-    aktiv: $(`#a_${moduleId}`).checked,
-    zellen: {},
-    werte: {}
-  };
 
   try {
 
-    // Excel-Zellen
+    const body = {
+      aktiv: document.getElementById(
+        `active_${moduleId}`
+      ).checked,
 
-    module.inputs.forEach(field => {
+      werte: {},
 
-      body.zellen[field.name] =
-        $(`#c_${moduleId}_${field.name}`).value.trim();
+      berechnungen: (module.config.berechnungen || [])
+        .map(instance => readInstance(module, instance))
+    };
 
-    });
-
-    // Einstellungen
-
+    // Globale Einstellungen auslesen
     module.settings.forEach(field => {
 
-      const element =
-        $(`#s_${moduleId}_${field.name}`);
+      const element = document.getElementById(
+        `s_${module.id}_${field.name}`
+      );
 
       body.werte[field.name] =
         readSetting(field, element);
 
     });
 
-    // Speichern am Server
-
+    // Server speichern
     await api(`/api/modules/${moduleId}`, {
-
       method: "PUT",
-
       headers: {
         "Content-Type": "application/json"
       },
-
       body: JSON.stringify(body)
-
     });
 
-    // Lokale Daten aktualisieren
-
+    // Lokale Konfiguration aktualisieren
     module.config.aktiv = body.aktiv;
-    module.config.zellen = body.zellen;
-    module.config.werte = body.werte;
+    module.config.berechnungen = body.berechnungen;
 
     message.textContent =
-      "Gespeichert ✓ – Excel aktualisieren";
+      "Alle Berechnungen gespeichert ✓";
 
     message.className = "success";
 
     showStatus(await api("/api/status"));
+
+    drawFormulas();
 
   } catch (error) {
 
@@ -804,6 +863,7 @@ async function save(moduleId) {
 
   }
 }
+
 
 // ============================================
 // EXCEL TESTEN
