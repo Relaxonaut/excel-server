@@ -130,73 +130,53 @@ def token_auth(
 _ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
-def config_for(mod: Module) -> dict:
 
+def config_for(mod: Module) -> dict:
     saved = store.load().get(mod.id, {})
 
     default_zellen = {
-        field.name: field.cell
-        for field in mod.inputs
+        f.name: f.cell for f in mod.inputs
     }
 
-    # Alte Konfigurationen automatisch übernehmen.
+    berechnungen = saved.get("berechnungen")
 
-    instances = saved.get("berechnungen")
-
-    if instances is None:
-
-        instances = [{
-            "id": "berechnung_1",
+    # Alte Konfiguration übernehmen
+    if not isinstance(berechnungen, list):
+        berechnungen = [{
+            "id": "calc_1",
             "name": "Berechnung 1",
             "aktiv": True,
             "zellen": {
                 **default_zellen,
-                **saved.get("zellen", {}),
-            },
+                **saved.get("zellen", {})
+            }
         }]
 
+    # Fehlende Felder ergänzen
     normalized = []
 
-    for index, instance in enumerate(instances):
-
-        if not isinstance(instance, dict):
-            continue
-
-        instance_id = instance.get(
-            "id",
-            f"berechnung_{index + 1}",
-        )
-
-        if not _ID_PATTERN.fullmatch(str(instance_id)):
-            instance_id = f"berechnung_{index + 1}"
+    for index, item in enumerate(berechnungen):
+        item = dict(item)
 
         normalized.append({
-            "id": str(instance_id),
-            "name": instance.get(
-                "name",
-                f"Berechnung {index + 1}",
-            ),
-            "aktiv": bool(instance.get("aktiv", True)),
+            "id": str(item.get("id") or f"calc_{index + 1}"),
+            "name": str(item.get("name") or f"Berechnung {index + 1}"),
+            "aktiv": item.get("aktiv", True),
             "zellen": {
                 **default_zellen,
-                **instance.get("zellen", {}),
-            },
+                **(item.get("zellen") or {})
+            }
         })
-
-    werte = {}
-
-    for field in mod.settings:
-
-        werte[field.name] = saved.get(
-            "werte", {}
-        ).get(field.name, field.default)
 
     return {
         "aktiv": saved.get("aktiv", mod.aktiv_standard),
-        "werte": werte,
-        "berechnungen": normalized,
+        "zellen": default_zellen,
+        "werte": {
+            f.name: saved.get("werte", {}).get(f.name, f.default)
+            for f in mod.settings
+        },
+        "berechnungen": normalized
     }
-
 
 def jsonable(value):
 
@@ -213,25 +193,43 @@ def jsonable(value):
     return str(value)
 
 
-def run_all(grid: list) -> list[dict]:
 
+def run_all(grid: list) -> list[dict]:
     rows = []
 
     for mod in Module.registry.values():
-
         cfg = config_for(mod)
 
         if not cfg["aktiv"]:
             continue
 
-        results = mod.run_instances(grid, cfg)
+        for instance in cfg["berechnungen"]:
 
-        for key, value in results.items():
+            if not instance["aktiv"]:
+                continue
 
-            rows.append({
-                "Name": f"{mod.id}.{key}",
-                "Wert": jsonable(value),
-            })
+            instance_id = instance["id"]
+
+            instance_config = {
+                "zellen": instance["zellen"],
+                "werte": cfg["werte"]
+            }
+
+            try:
+                result = mod.run_grid(grid, instance_config)
+
+            except Exception as e:
+                rows.append({
+                    "Name": f"{mod.id}.{instance_id}._fehler",
+                    "Wert": str(e)
+                })
+                continue
+
+            for key, value in result.items():
+                rows.append({
+                    "Name": f"{mod.id}.{instance_id}.{key}",
+                    "Wert": jsonable(value)
+                })
 
     return rows
 
@@ -437,32 +435,61 @@ def list_modules():
     "/api/modules/{module_id}",
     dependencies=[Depends(ui_auth)],
 )
-async def save_module(
-    module_id: str,
-    request: Request,
-):
+
+@app.put("/api/modules/{module_id}", dependencies=[Depends(ui_auth)])
+async def save_module(module_id: str, request: Request):
 
     mod = Module.registry.get(module_id)
 
     if mod is None:
         raise HTTPException(404, "Modul unbekannt")
 
+    body = await request.json()
+
     try:
-
-        body = await request.json()
-
-        config = validate_config(mod, body)
-
-        store.save_module(module_id, config)
-
-        return {
-            "ok": True,
-            "anzahl": len(config["berechnungen"]),
+        werte = {
+            f.name: coerce(
+                f,
+                body.get("werte", {}).get(f.name)
+            )
+            for f in mod.settings
         }
 
-    except (ValueError, TypeError) as error:
+        berechnungen = []
 
-        raise HTTPException(400, str(error))
+        for index, item in enumerate(body.get("berechnungen", [])):
+
+            zellen = {}
+
+            for field in mod.inputs:
+                adresse = str(
+                    item.get("zellen", {}).get(field.name)
+                    or field.cell
+                    or ""
+                ).strip()
+
+                if adresse:
+                    cell_value([], adresse)
+
+                zellen[field.name] = adresse
+
+            berechnungen.append({
+                "id": str(item.get("id") or f"calc_{index + 1}"),
+                "name": str(item.get("name") or f"Berechnung {index + 1}"),
+                "aktiv": bool(item.get("aktiv", True)),
+                "zellen": zellen
+            })
+
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+
+    store.save_module(module_id, {
+        "aktiv": bool(body.get("aktiv")),
+        "werte": werte,
+        "berechnungen": berechnungen
+    })
+
+    return {"ok": True}
 
 
 @app.get(
