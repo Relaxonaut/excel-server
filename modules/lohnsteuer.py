@@ -7,7 +7,7 @@ from typing import Optional
 
 from lohnsteuer_bmf import berechne_lohnsteuer_pap
 
-from core.base import Field, Module
+from core.base import Field, Module, Output
 
 
 def _to_dict(ergebnis) -> dict:
@@ -24,30 +24,33 @@ def _to_dict(ergebnis) -> dict:
 
 
 def _berechne(inputs: dict, settings: dict, jahr: int) -> dict:
-    kinder = float(inputs.get("kinder", 0))
-
-    if kinder < 0:
-        raise ValueError("Kinderfreibetrag darf nicht negativ sein.")
-
-    kinderwert = int(kinder) if kinder.is_integer() else kinder
 
     brutto = float(inputs["brutto_monat"])
-
-    if brutto < 0:
-        raise ValueError("Monatsbrutto darf nicht negativ sein.")
 
     if brutto <= 0:
         raise ValueError("Monatsbrutto muss größer als 0 sein.")
 
+    kinder = float(inputs["kinder"])
+
+    if kinder < 0:
+        raise ValueError("Kinder darf nicht negativ sein.")
+
+    kinder = int(kinder) if kinder.is_integer() else kinder
+
+    steuerklasse = int(inputs["steuerklasse"])
+
+    if steuerklasse not in (1, 2, 3, 4, 5, 6):
+        raise ValueError("Ungültige Steuerklasse.")
+
     ergebnis = berechne_lohnsteuer_pap(
         brutto_jahr=int(round(brutto * 12)),
-        steuerklasse=int(inputs["steuerklasse"]),
+        steuerklasse=steuerklasse,
         bundesland=inputs["bundesland"],
-        mit_kirchensteuer=bool(settings["mit_kirchensteuer"]),
-        kinder=kinderwert,
+        mit_kirchensteuer=settings["mit_kirchensteuer"],
+        kinder=kinder,
         geburtsjahr=int(inputs["geburtsjahr"]),
         kv_zusatzbeitrag=float(settings["kv_zusatzbeitrag"]),
-        ist_sachsen=bool(settings["ist_sachsen"]),
+        ist_sachsen=settings["ist_sachsen"],
         jahr=int(jahr),
     )
 
@@ -58,10 +61,94 @@ class Lohnsteuer(Module):
 
     id = "lohnsteuer"
     name = "Lohnsteuer (BMF-PAP)"
+
     description = (
-        "Berechnet die deutsche Lohnsteuer "
-        "auf Basis des BMF-Programmablaufplans."
+        "Berechnet die deutsche Lohnsteuer anhand "
+        "des Bundesfinanzministeriums."
     )
+
+    aktiv_standard = True
+
+    inputs = [
+        Field(
+            "brutto_monat",
+            "Monatsbrutto",
+            "float",
+            example=3500,
+            cell="G20",
+            help="Monatliches Bruttogehalt in Euro."
+        ),
+        Field(
+            "steuerklasse",
+            "Steuerklasse",
+            "int",
+            example=1,
+            cell="C20",
+        ),
+        Field(
+            "bundesland",
+            "Bundesland",
+            "select",
+            example="Hamburg",
+            cell="E20",
+            options=[
+                "Baden-Württemberg",
+                "Bayern",
+                "Berlin",
+                "Brandenburg",
+                "Bremen",
+                "Hamburg",
+                "Hessen",
+                "Mecklenburg-Vorpommern",
+                "Niedersachsen",
+                "Nordrhein-Westfalen",
+                "Rheinland-Pfalz",
+                "Saarland",
+                "Sachsen",
+                "Sachsen-Anhalt",
+                "Schleswig-Holstein",
+                "Thüringen",
+            ],
+        ),
+        Field(
+            "kinder",
+            "Kinderfreibetrag",
+            "float",
+            default=0,
+            example=0,
+            cell="D20",
+        ),
+        Field(
+            "geburtsjahr",
+            "Geburtsjahr",
+            "int",
+            example=1990,
+            cell="F20",
+        ),
+    ]
+
+    settings = [
+        Field(
+            "kv_zusatzbeitrag",
+            "KV-Zusatzbeitrag (%)",
+            "float",
+            default=2.9,
+        ),
+        Field(
+            "mit_kirchensteuer",
+            "Kirchensteuer",
+            "bool",
+            default=False,
+        ),
+        Field(
+            "ist_sachsen",
+            "Sachsen (Pflegeversicherung)",
+            "bool",
+            default=False,
+        ),
+    ]
+
+    outputs = []
 
     DEFAULT_SETTINGS = {
         "kv_zusatzbeitrag": 2.9,
@@ -69,52 +156,48 @@ class Lohnsteuer(Module):
         "ist_sachsen": False,
     }
 
-    inputs = [
-        Field("brutto_monat", "Monatsbrutto", "float",
-              example=3500, cell="G20"),
-        Field("steuerklasse", "Steuerklasse", "int",
-              example=1, cell="C20"),
-        Field("bundesland", "Bundesland", "text",
-              example="Hamburg", cell="E20"),
-        Field("kinder", "Kinder", "float",
-              default=0, example=0, cell="D20"),
-        Field("geburtsjahr", "Geburtsjahr", "int",
-              example=1990, cell="F20"),
-    ]
+    # Instanzverwaltung
+    _instanzen = {}
+    _lock = RLock()
 
-    settings = [
-        Field("kv_zusatzbeitrag", "KV-Zusatzbeitrag (%)",
-              "float", default=2.9),
-        Field("mit_kirchensteuer", "Mit Kirchensteuer",
-              "bool", default=False),
-        Field("ist_sachsen", "Sachsen (Pflegeversicherung)",
-              "bool", default=False),
-    ]
+    # ------------------------------------------------
+    # Normale Framework-Berechnung
+    # ------------------------------------------------
 
-    def __init__(self):
-        super().__init__()
-        self._instanzen = {}
-        self._lock = RLock()
-
-    # -------------------------------------------------
-    # Einzelberechnung
-    # -------------------------------------------------
-
-    def calculate(self, i: dict, s: dict) -> dict:
-        settings = {
-            **self.DEFAULT_SETTINGS,
-            **dict(s or {}),
-        }
+    def calculate(self, inputs: dict, settings: dict) -> dict:
 
         return _berechne(
-            dict(i),
-            settings,
+            inputs,
+            {
+                **self.DEFAULT_SETTINGS,
+                **settings,
+            },
             datetime.datetime.now().year,
         )
 
-    # -------------------------------------------------
-    # Neue Instanz erstellen
-    # -------------------------------------------------
+    # ------------------------------------------------
+    # Berechnung mit festem Steuerjahr
+    # ------------------------------------------------
+
+    def calculate_year(
+        self,
+        inputs: dict,
+        settings: dict,
+        jahr: int,
+    ) -> dict:
+
+        return _berechne(
+            inputs,
+            {
+                **self.DEFAULT_SETTINGS,
+                **settings,
+            },
+            jahr,
+        )
+
+    # ------------------------------------------------
+    # Neue unabhängige Berechnungsinstanz
+    # ------------------------------------------------
 
     def neue_instanz(
         self,
@@ -122,12 +205,13 @@ class Lohnsteuer(Module):
         inputs: dict,
         settings: Optional[dict] = None,
         jahr: Optional[int] = None,
-    ) -> dict:
+    ):
 
         if not instanz_id:
             raise ValueError("Instanz-ID darf nicht leer sein.")
 
         with self._lock:
+
             if instanz_id in self._instanzen:
                 raise ValueError(
                     f"Instanz '{instanz_id}' existiert bereits."
@@ -137,18 +221,16 @@ class Lohnsteuer(Module):
                 "inputs": dict(inputs),
                 "settings": {
                     **self.DEFAULT_SETTINGS,
-                    **dict(settings or {}),
+                    **(settings or {}),
                 },
                 "jahr": jahr or datetime.datetime.now().year,
                 "ergebnis": None,
                 "fehler": None,
             }
 
-        return self.instanz(instanz_id)
-
-    # -------------------------------------------------
-    # Instanz ändern
-    # -------------------------------------------------
+    # ------------------------------------------------
+    # Instanz aktualisieren
+    # ------------------------------------------------
 
     def aktualisiere_instanz(
         self,
@@ -159,15 +241,16 @@ class Lohnsteuer(Module):
     ):
 
         with self._lock:
+
             if instanz_id not in self._instanzen:
-                raise KeyError(f"Instanz '{instanz_id}' nicht gefunden.")
+                raise KeyError(instanz_id)
 
             daten = self._instanzen[instanz_id]
 
-            if inputs is not None:
+            if inputs:
                 daten["inputs"].update(inputs)
 
-            if settings is not None:
+            if settings:
                 daten["settings"].update(settings)
 
             if jahr is not None:
@@ -176,30 +259,29 @@ class Lohnsteuer(Module):
             daten["ergebnis"] = None
             daten["fehler"] = None
 
-    # -------------------------------------------------
-    # Einzelne Instanz berechnen
-    # -------------------------------------------------
+    # ------------------------------------------------
+    # Eine Instanz berechnen
+    # ------------------------------------------------
 
     def berechne_instanz(self, instanz_id: str) -> dict:
 
         with self._lock:
-            if instanz_id not in self._instanzen:
-                raise KeyError(f"Instanz '{instanz_id}' nicht gefunden.")
 
-            daten = {
-                "inputs": dict(self._instanzen[instanz_id]["inputs"]),
-                "settings": dict(self._instanzen[instanz_id]["settings"]),
-                "jahr": self._instanzen[instanz_id]["jahr"],
-            }
+            if instanz_id not in self._instanzen:
+                raise KeyError(instanz_id)
+
+            daten = self._instanzen[instanz_id].copy()
 
         try:
-            ergebnis = _berechne(
+
+            ergebnis = self.calculate_year(
                 daten["inputs"],
                 daten["settings"],
                 daten["jahr"],
             )
 
             with self._lock:
+
                 if instanz_id in self._instanzen:
                     self._instanzen[instanz_id]["ergebnis"] = ergebnis
                     self._instanzen[instanz_id]["fehler"] = None
@@ -207,15 +289,17 @@ class Lohnsteuer(Module):
             return ergebnis
 
         except Exception as exc:
+
             with self._lock:
+
                 if instanz_id in self._instanzen:
                     self._instanzen[instanz_id]["fehler"] = str(exc)
 
             raise
 
-    # -------------------------------------------------
+    # ------------------------------------------------
     # Alle Instanzen parallel berechnen
-    # -------------------------------------------------
+    # ------------------------------------------------
 
     def berechne_alle(self, max_workers=None) -> dict:
 
@@ -225,12 +309,14 @@ class Lohnsteuer(Module):
         ergebnisse = {}
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
+
             futures = {
                 executor.submit(self.berechne_instanz, iid): iid
                 for iid in ids
             }
 
             for future in as_completed(futures):
+
                 iid = futures[future]
 
                 try:
@@ -238,6 +324,7 @@ class Lohnsteuer(Module):
                         "success": True,
                         "ergebnis": future.result(),
                     }
+
                 except Exception as exc:
                     ergebnisse[iid] = {
                         "success": False,
@@ -246,65 +333,51 @@ class Lohnsteuer(Module):
 
         return ergebnisse
 
-    # -------------------------------------------------
-    # Instanz abrufen
-    # -------------------------------------------------
+    # ------------------------------------------------
+    # Einzelne Instanz abrufen
+    # ------------------------------------------------
 
     def instanz(self, instanz_id: str) -> dict:
 
         with self._lock:
+
             if instanz_id not in self._instanzen:
-                raise KeyError(f"Instanz '{instanz_id}' nicht gefunden.")
+                raise KeyError(instanz_id)
 
-            daten = self._instanzen[instanz_id]
+            return dict(self._instanzen[instanz_id])
 
-            return {
-                "id": instanz_id,
-                "inputs": dict(daten["inputs"]),
-                "settings": dict(daten["settings"]),
-                "jahr": daten["jahr"],
-                "ergebnis": daten["ergebnis"],
-                "fehler": daten["fehler"],
-            }
-
-    # -------------------------------------------------
+    # ------------------------------------------------
     # Ergebnis abrufen
-    # -------------------------------------------------
+    # ------------------------------------------------
 
     def ergebnis(self, instanz_id: str):
 
         return self.instanz(instanz_id)["ergebnis"]
 
-    # -------------------------------------------------
+    # ------------------------------------------------
     # Alle Instanzen abrufen
-    # -------------------------------------------------
+    # ------------------------------------------------
 
     def alle_instanzen(self) -> dict:
 
         with self._lock:
-            ids = list(self._instanzen.keys())
+            return {
+                key: dict(value)
+                for key, value in self._instanzen.items()
+            }
 
-        return {
-            iid: self.instanz(iid)
-            for iid in ids
-        }
-
-    # -------------------------------------------------
+    # ------------------------------------------------
     # Instanz löschen
-    # -------------------------------------------------
+    # ------------------------------------------------
 
     def entferne_instanz(self, instanz_id: str):
 
         with self._lock:
-            if instanz_id not in self._instanzen:
-                return False
+            return self._instanzen.pop(instanz_id, None) is not None
 
-            del self._instanzen[instanz_id]
-            return True
-
-    # -------------------------------------------------
+    # ------------------------------------------------
     # Alle Instanzen löschen
-    # -------------------------------------------------
+    # ------------------------------------------------
 
     def alle_entfernen(self):
 
