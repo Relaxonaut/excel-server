@@ -587,6 +587,55 @@ function renderModules() {
   drawFormulas();
 }
 
+function addCalculation(moduleId) {
+
+  const module = MODS.find(m => m.id === moduleId);
+
+  if (!module) {
+    alert("Modul nicht gefunden!");
+    return;
+  }
+
+  // Vorhandene Berechnungen und Eingaben übernehmen
+  module.config.berechnungen =
+    (module.config.berechnungen || []).map(instance =>
+      readInstance(module, instance)
+    );
+
+  // Neue Berechnung erstellen
+  const instance = {
+    id: newId(),
+    name: `Berechnung ${module.config.berechnungen.length + 1}`,
+    aktiv: true,
+    zellen: {}
+  };
+
+  // Standard-Excel-Zellen übernehmen
+  module.inputs.forEach(field => {
+    instance.zellen[field.name] = field.cell || "";
+  });
+
+  // Hinzufügen
+  module.config.berechnungen.push(instance);
+
+  // UI aktualisieren
+  renderModules();
+
+  // Zur neuen Berechnung scrollen
+  setTimeout(() => {
+    const element = document.getElementById(
+      `instance_${moduleId}_${instance.id}`
+    );
+
+    if (element) {
+      element.scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+      });
+    }
+  }, 50);
+}
+
 // ============================================
 // FORMELN
 // ============================================
