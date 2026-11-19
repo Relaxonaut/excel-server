@@ -181,11 +181,12 @@ def config_for(mod: Module) -> dict:
         saved = {}
 
     werte = {}
+    saved_werte = saved.get("werte", {})
+    if not isinstance(saved_werte, dict):
+        saved_werte = {}
 
     for field in mod.settings:
-        werte[field.name] = saved.get(
-            "werte", {}
-        ).get(
+        werte[field.name] = saved_werte.get(
             field.name,
             field.default
         )
@@ -193,8 +194,11 @@ def config_for(mod: Module) -> dict:
     # Bestehende Berechnungen übernehmen
     if "berechnungen" in saved:
 
-        berechnungen = copy.deepcopy(
-            saved.get("berechnungen") or []
+        raw_berechnungen = saved.get("berechnungen")
+        berechnungen = (
+            copy.deepcopy(raw_berechnungen)
+            if isinstance(raw_berechnungen, list)
+            else []
         )
 
     else:
@@ -207,13 +211,26 @@ def config_for(mod: Module) -> dict:
 
         berechnungen = [instance]
 
-    # Fehlende Zellzuordnungen ergänzen
-    for instance in berechnungen:
+    # Fehlende Angaben ergänzen. Numerische IDs sind stabil und
+    # ändern sich nicht bei jedem Server-Neustart.
+    berechnungen = [
+        instance for instance in berechnungen
+        if isinstance(instance, dict)
+    ]
 
-        instance.setdefault("id", str(id(instance)))
-        instance.setdefault("name", "Berechnung")
+    verwendete_ids = set()
+    for index, instance in enumerate(berechnungen, start=1):
+
+        instance_id = str(instance.get("id") or index)
+        if instance_id in verwendete_ids:
+            instance_id = f"{instance_id}_{index}"
+        verwendete_ids.add(instance_id)
+        instance["id"] = instance_id
+
+        instance.setdefault("name", f"Berechnung {index}")
         instance.setdefault("aktiv", True)
-        instance.setdefault("zellen", {})
+        if not isinstance(instance.get("zellen"), dict):
+            instance["zellen"] = {}
 
         for field in mod.inputs:
             if not instance["zellen"].get(field.name):
