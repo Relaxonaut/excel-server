@@ -483,6 +483,42 @@ function readInstance(module, instance) {
   };
 }
 
+// Globale Einstellungen vor einem UI-Neuaufbau lokal sichern.
+// So gehen Eingaben beim Hinzufügen/Entfernen einer Berechnung nicht verloren.
+function captureSettings(module) {
+
+  const werte = {};
+
+  module.settings.forEach(field => {
+    const element = document.getElementById(
+      `s_${module.id}_${field.name}`
+    );
+
+    if (!element) {
+      werte[field.name] = settingValue(module, field);
+      return;
+    }
+
+    if (field.type === "bool") {
+      werte[field.name] = element.checked;
+      return;
+    }
+
+    const raw = element.value;
+    if ((field.type === "int" || field.type === "float") && raw.trim() !== "") {
+      const numericValue = Number(raw);
+      werte[field.name] = Number.isFinite(numericValue) ? numericValue : raw;
+      return;
+    }
+
+    werte[field.name] = raw.trim() === ""
+      ? (field.default ?? null)
+      : raw;
+  });
+
+  module.config.werte = werte;
+}
+
 // ============================================
 // EINZELNE BERECHNUNG DARSTELLEN
 // ============================================
@@ -632,7 +668,9 @@ function addCalculation(moduleId) {
     return;
   }
 
-  // Bestehende Eingaben übernehmen
+  // Bestehende Eingaben und globale Einstellungen übernehmen
+  captureSettings(module);
+
   module.config.berechnungen =
     (module.config.berechnungen || []).map(instance =>
       readInstance(module, instance)
@@ -678,6 +716,8 @@ function removeCalculation(moduleId, instanceId) {
 
   if (!module) return;
 
+  captureSettings(module);
+
   module.config.berechnungen =
     (module.config.berechnungen || []).map(instance =>
       readInstance(module, instance)
@@ -707,15 +747,16 @@ function drawFormulas() {
 
     const instances = module.config.berechnungen || [];
 
-    container.innerHTML = instances.map(instance => {
+    container.innerHTML = instances.map((instance, index) => {
+
+      const prefix = `${module.id}.berechnung_${index + 1}`;
 
       return `
         <h4>${esc(instance.name)}</h4>
 
         ${(module.outputs || []).map(output => {
 
-          const key =
-            `${module.id}.${instance.id}.${output.name}`;
+          const key = `${prefix}.${output.name}`;
 
           const formula =
             `=${language.VLOOKUP}("${key}"` +
@@ -843,7 +884,9 @@ async function saveModule(moduleId) {
 
     // Lokale Konfiguration aktualisieren
     module.config.aktiv = body.aktiv;
+    module.config.werte = body.werte;
     module.config.berechnungen = body.berechnungen;
+    module.config.zellen = body.berechnungen[0]?.zellen || {};
 
     message.textContent =
       "Alle Berechnungen gespeichert ✓";
